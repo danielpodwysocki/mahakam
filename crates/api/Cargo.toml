@@ -8,6 +8,7 @@ name = "api"
 path = "src/main.rs"
 
 [dependencies]
+shared = { path = "../shared" }
 axum = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

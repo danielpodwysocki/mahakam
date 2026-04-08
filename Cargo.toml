@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/shared",
     "crates/api",
 ]
 resolver = "2"

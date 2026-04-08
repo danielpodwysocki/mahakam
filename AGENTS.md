@@ -17,16 +17,23 @@ The workspace layout looks as follows:
 
 - `Cargo.toml` - workspace manifest listing all member crates
 - `crates/` - one directory per deployable or shared crate
-  - `crates/api/` - the primary HTTP API service
+  - `crates/shared/` - **mandatory shared library**: repository traits, models, and services reusable across multiple programs
+    - `src/lib.rs` - re-exports all public modules
+    - `src/services/` - business logic reusable across programs
+    - `src/repositories/` - repository traits, models, and implementations
+  - `crates/api/` - HTTP API service (depends on `crates/shared`)
     - `src/main.rs` - entry point
     - `src/routes/` - axum router and handler registration
     - `src/config.rs` - configuration loaded from env/flags
     - `src/error.rs` - application-level error type
-  - `crates/shared/` - types and utilities shared across crates (optional)
-- `crates/<service>/src/services/` - business logic layer
-- `crates/<service>/src/repositories/` - data layer
-- `tests/` - integration tests (one file per service under test)
+  - `crates/<cli-name>/` - CLI programs (depend on `crates/shared`)
+    - `src/main.rs` - entry point, clap setup
+- `tests/` - integration tests (one file per program under test)
 
+**The rule for placement:**
+- If logic or data access could ever be used by more than one program → put it in `crates/shared/`
+- If it is strictly specific to one program's transport layer (HTTP handlers, CLI argument parsing) → put it in that program's crate
+- When in doubt, put it in `crates/shared/`
 
 Under `crates/` you can put programs of all kinds: CLI tools, daemons, web services.
 For web services, assuming service `hello` as an example, follow this structure:
@@ -37,22 +44,20 @@ For web services, assuming service `hello` as an example, follow this structure:
 
 Repositories must only ever be imported in services, never directly in handlers.
 
-Each `crates/<service>/src/repositories/<RepositoryName>/` follows this structure:
+Each `crates/shared/src/repositories/<RepositoryName>/` follows this structure:
 - `mod.rs` - the trait definition that all implementations must satisfy
 - `models.rs` - data models returned by the repository
 - `mock.rs` - mock implementation with no external connectors (for unit tests)
 - `<datasource>.rs` - specific implementations (e.g., `postgres.rs`, `mysql.rs`)
 
 
-Only add new services when explicitly requested in the task specification.
-When adding a new service, you must:
-1. Create `crates/<service-name>/` directory with `Cargo.toml` and `src/main.rs`
+Only add new programs when explicitly requested in the task specification.
+When adding a new deployable program (web service, CLI, daemon), you must:
+1. Create `crates/<name>/` with `Cargo.toml` (declare `shared = { path = "../shared" }`) and `src/main.rs`
 2. Add the crate to the workspace `Cargo.toml` members list
-3. Create a new `images/<service-name>.containerfile` using existing containerfiles as reference
-4. Update `skaffold.yaml` to include the new artifact and deployment
-5. Create `kube/<service-name>-deployment.yaml` for Kubernetes manifests
-6. Update `kube/kustomization.yaml` to reference the new manifest
-7. Update the "Project structure - project specific" section in this file
+3. Place any new business logic or repository code in `crates/shared/`, not in the new crate
+4. For web services: create `images/<name>.containerfile`, update `skaffold.yaml`, create `kube/<name>-deployment.yaml`, update `kube/kustomization.yaml`
+5. Update the "Project structure - project specific" section in this file
 
 
 
@@ -70,9 +75,17 @@ HTTP API service providing REST endpoints. Main entry point for the application.
 
 (No repositories yet — add entries here as repositories are created)
 
-### Shared Crates
+### Shared Crate (crates/shared)
 
-(No shared crates yet — add entries here as shared crates are created)
+The shared crate is the home for all reusable business logic and data access. Every service and CLI in this repo depends on it.
+
+#### Services
+
+(No shared services yet — add entries here as services are created)
+
+#### Repositories
+
+(No repositories yet — add entries here as repositories are created)
 
 
 ## Tools available
