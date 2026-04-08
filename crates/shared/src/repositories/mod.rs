@@ -4,4 +4,6 @@
 //   repositories/<RepositoryName>/mod.rs      — trait definition
 //   repositories/<RepositoryName>/models.rs   — data models
 //   repositories/<RepositoryName>/mock.rs     — mockall mock for unit tests
-//   repositories/<RepositoryName>/postgres.rs — production implementation
+//   repositories/<RepositoryName>/sqlite.rs   — SQLite implementation
+
+pub mod environment;

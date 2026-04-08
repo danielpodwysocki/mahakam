@@ -45,6 +45,25 @@ tasks:
       - skaffold dev --port-forward=pods
     deps: [cluster]
 
+  install:
+    desc: Bootstrap Kind cluster with ArgoCD + mahakam via Helm
+    cmds:
+      - task: cluster
+      - task: add-vcluster-repo
+      - helm dependency update chart/mahakam
+      - helm upgrade --install mahakam chart/mahakam --namespace mahakam-system --create-namespace --wait
+
+  uninstall:
+    desc: Remove mahakam Helm release
+    cmds:
+      - helm uninstall mahakam --namespace mahakam-system --ignore-not-found
+
+  add-vcluster-repo:
+    desc: Add vcluster Helm repository (run once)
+    cmds:
+      - helm repo add vcluster https://charts.loft.sh || true
+      - helm repo update
+
   verify-all:
     desc: Run the full skaffold verify sequence
     cmds:
@@ -64,23 +83,30 @@ tasks:
       - kind delete cluster --name danielpodwysocki
 
   test:
-    desc: Run all tests with cargo-nextest
+    desc: Run all tests (Rust + frontend)
     cmds:
       - cargo nextest run
+      - npm --prefix frontends/web run test:unit
 
   coverage:
     desc: Enforce 100% line coverage on crates/shared/src/services (fails if any line uncovered)
     cmds:
-      - cargo llvm-cov nextest
+      - cargo llvm-cov test
           --package shared
-          --include-pattern 'crates/shared/src/services'
+          --ignore-filename-regex 'repositories'
           --fail-under-lines 100
 
+  coverage-frontend:
+    desc: Enforce 100% coverage on frontend api/, composables/, components/, stores/
+    cmds:
+      - npm --prefix frontends/web run coverage
+
   lint:
-    desc: Run clippy and check formatting
+    desc: Run clippy, check formatting, and typecheck frontend
     cmds:
       - cargo clippy -- -D warnings
       - cargo fmt --check
+      - npm --prefix frontends/web run typecheck
 
   fmt:
     desc: Auto-format all code
@@ -88,6 +114,7 @@ tasks:
       - cargo fmt
 
   docker-build:
-    desc: Build container image locally
+    desc: Build container images locally
     cmds:
-      - docker build -f images/api.containerfile -t rust-template:latest .
+      - docker build -f images/api.containerfile -t mahakam-api:latest .
+      - docker build -f images/web.containerfile -t mahakam-web:latest .

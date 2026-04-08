@@ -1,22 +1,29 @@
 apiVersion: skaffold/v4beta13
 kind: Config
 metadata:
-  name: rust-template
+  name: mahakam
 build:
   artifacts:
-    - image: rust-template
+    - image: mahakam-api
       docker:
         dockerfile: images/api.containerfile
       sync:
         manual:
           - src: "crates/**/*.rs"
             dest: /app/source/crates
+    - image: mahakam-web
+      docker:
+        dockerfile: images/web.containerfile
 manifests:
   kustomize:
     paths:
       - kube/
 portForward:
   - resourceType: deployment
-    resourceName: rust-template
+    resourceName: mahakam-api
     port: 3000
     localPort: 3000
+  - resourceType: deployment
+    resourceName: mahakam-web
+    port: 3001
+    localPort: 3001

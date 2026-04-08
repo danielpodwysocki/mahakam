@@ -1,3 +1,9 @@
 resources:
-  - deployment.yaml
+  - namespace.yaml
+  - serviceaccount.yaml
+  - rbac.yaml
+  - api-deployment.yaml
+  - api-service.yaml
+  - web-deployment.yaml
+  - web-service.yaml
   - dev-tooling.yaml

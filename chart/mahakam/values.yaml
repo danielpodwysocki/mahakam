@@ -1,0 +1,15 @@
+argo-cd:
+  enabled: true
+  configs:
+    params:
+      server.insecure: true
+
+api:
+  image: mahakam-api
+  tag: latest
+  databaseUrl: sqlite:///data/mahakam.db
+  environmentsBasePath: /app/environments/base
+
+web:
+  image: mahakam-web
+  tag: latest

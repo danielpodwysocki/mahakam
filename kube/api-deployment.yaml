@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mahakam-api
+  namespace: mahakam-system
+  labels:
+    app: mahakam-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mahakam-api
+  template:
+    metadata:
+      labels:
+        app: mahakam-api
+    spec:
+      serviceAccountName: mahakam-api
+      containers:
+        - name: api
+          image: mahakam-api
+          ports:
+            - containerPort: 3000
+          env:
+            - name: DATABASE_URL
+              value: sqlite:///data/mahakam.db
+            - name: ENVIRONMENTS_BASE_PATH
+              value: /app/environments/base
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          emptyDir: {}

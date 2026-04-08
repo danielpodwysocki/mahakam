@@ -1,0 +1,31 @@
+{
+  "name": "mahakam-web",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "build": "nuxt build",
+    "dev": "nuxt dev --port 3001",
+    "generate": "nuxt generate",
+    "preview": "nuxt preview",
+    "typecheck": "vue-tsc --noEmit",
+    "test:unit": "vitest run",
+    "test:e2e": "playwright test",
+    "coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "nuxt": "^3.14.0",
+    "vue": "^3.5.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@nuxt/test-utils": "^3.14.0",
+    "@playwright/test": "^1.45.0",
+    "@vitejs/plugin-vue": "^5.0.0",
+    "@vitest/coverage-v8": "^2.0.0",
+    "@vue/test-utils": "^2.4.0",
+    "happy-dom": "^15.0.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0",
+    "vue-tsc": "^2.0.0"
+  }
+}
