@@ -1,0 +1,22 @@
+apiVersion: skaffold/v4beta13
+kind: Config
+metadata:
+  name: rust-template
+build:
+  artifacts:
+    - image: rust-template
+      docker:
+        dockerfile: images/api.containerfile
+      sync:
+        manual:
+          - src: "crates/**/*.rs"
+            dest: /app/source/crates
+manifests:
+  kustomize:
+    paths:
+      - kube/
+portForward:
+  - resourceType: deployment
+    resourceName: rust-template
+    port: 3000
+    localPort: 3000

@@ -1,0 +1,85 @@
+version: '3'
+
+tasks:
+  default:
+    silent: true
+    cmds:
+      - task --list
+
+  project-init:
+    desc: Initialize project by replacing rust-template with current directory name
+    cmds:
+      - rg -l rust-template | grep -v Taskfile.yml | xargs sed -i "s/rust-template/${PWD##*/}/g"
+
+  build:
+    desc: Build all binaries in release mode
+    cmds:
+      - cargo build --release
+    sources:
+      - crates/**/*.rs
+      - Cargo.toml
+      - Cargo.lock
+    generates:
+      - target/release/api
+
+  run:
+    desc: Run the API locally
+    cmds:
+      - cargo run --bin api
+    deps: [test]
+
+  cleanup:
+    desc: Delete the Kind cluster
+    cmds:
+      - kind delete cluster --name danielpodwysocki
+
+  cluster:
+    desc: Create Kind cluster if it doesn't exist
+    cmds:
+      - (kind get clusters | grep danielpodwysocki) || kind create cluster --name danielpodwysocki --config=kind.yaml
+      - kubectl config use-context kind-danielpodwysocki
+
+  develop:
+    desc: Start development environment with Skaffold
+    cmds:
+      - skaffold dev --port-forward=pods
+    deps: [cluster]
+
+  verify-all:
+    desc: Run the full skaffold verify sequence
+    cmds:
+      - skaffold verify -a .skaffold-build.json || (task cleanup && exit 1)
+    deps: [verify-dependencies]
+
+  verify-dependencies:
+    desc: Prep dependencies for e2e testing
+    cmds:
+      - skaffold build --file-output .skaffold-build.json
+      - skaffold deploy -a .skaffold-build.json --load-images=true
+    deps: [cluster]
+
+  cluster-down:
+    desc: Stop and delete the Kind cluster
+    cmds:
+      - kind delete cluster --name danielpodwysocki
+
+  test:
+    desc: Run all tests with cargo-nextest
+    cmds:
+      - cargo nextest run
+
+  lint:
+    desc: Run clippy and check formatting
+    cmds:
+      - cargo clippy -- -D warnings
+      - cargo fmt --check
+
+  fmt:
+    desc: Auto-format all code
+    cmds:
+      - cargo fmt
+
+  docker-build:
+    desc: Build container image locally
+    cmds:
+      - docker build -f images/api.containerfile -t rust-template:latest .

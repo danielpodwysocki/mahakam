@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dev-tooling
+  labels:
+    app: dev-tooling
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dev-tooling
+  template:
+    metadata:
+      labels:
+        app: dev-tooling
+    spec:
+      containers:
+      - name: dev-tooling
+        image: rust:alpine
+        command: ["sleep", "infinity"]
+        volumeMounts:
+        - name: e2e
+          mountPath: /e2e
+        workingDir: /e2e
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+      volumes:
+      - name: e2e
+        hostPath:
+          path: /e2e
+          type: Directory

@@ -1,0 +1,26 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  creationTimestamp: null
+  labels:
+    app: rust-template
+  name: rust-template
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rust-template
+  strategy: {}
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        app: rust-template
+    spec:
+      containers:
+      - image: rust-template
+        name: rust-template
+        ports:
+          - containerPort: 3000
+        resources: {}
+status: {}
