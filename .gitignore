@@ -1,0 +1,33 @@
+# Rust build artifacts
+/target/
+
+# SQLite databases
+*.db
+*.db-shm
+*.db-wal
+
+# Environment files
+.env
+.env.local
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+
+# Frontend build artifacts
+frontends/web/node_modules/
+frontends/web/.nuxt/
+frontends/web/.output/
+frontends/web/dist/
+frontends/web/coverage/
+frontends/web/package-lock.json
+
+# Gas Town runtime (not project code)
+.beads/
+.claude/
+.runtime/
+1
+CLAUDE.local.md
