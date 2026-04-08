@@ -1,8 +1,8 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{path::PathBuf, str::FromStr, sync::Arc};
 
 use anyhow::Result;
 use clap::Parser;
-use sqlx::sqlite::SqlitePoolOptions;
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
@@ -49,9 +49,12 @@ async fn main() -> Result<()> {
         }
     }
 
+    let connect_opts =
+        SqliteConnectOptions::from_str(&config.database_url)?.create_if_missing(true);
+
     let pool = SqlitePoolOptions::new()
         .max_connections(5)
-        .connect(&config.database_url)
+        .connect_with(connect_opts)
         .await?;
 
     sqlx::migrate!("./migrations").run(&pool).await?;

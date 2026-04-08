@@ -5,30 +5,35 @@ use tracing::{error, info};
 
 /// Applies a per-environment kustomize overlay generated from `base_path`.
 ///
-/// Creates a temp directory with a generated overlay, then runs
-/// `kubectl apply -k <tempdir>`.
+/// Copies the base into the temp directory so kustomize can reference it
+/// with a relative path (kustomize does not accept absolute paths).
+/// Then runs `kubectl apply -k <tempdir/overlay>`.
 pub async fn apply_env_kustomization(
     env_name: &str,
     repos: &[String],
     base_path: &Path,
 ) -> anyhow::Result<()> {
     let tmp = tempfile::tempdir()?;
-    let overlay_dir = tmp.path();
+    let overlay_dir = tmp.path().join("overlay");
+    std::fs::create_dir_all(&overlay_dir)?;
+
+    // Copy base into a sibling directory so overlay can reference it as ../base.
+    let base_copy = tmp.path().join("base");
+    copy_dir(base_path, &base_copy)?;
 
     let repos_json = serde_json::to_string(repos)?;
-    let base_abs = base_path
-        .canonicalize()
-        .unwrap_or_else(|_| base_path.to_path_buf());
 
     let kustomization = format!(
         r#"apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - {base}
+  - ../base
 namespace: env-{name}
-commonLabels:
-  mahakam.io/managed: "true"
-  mahakam.io/env: {name}
+labels:
+  - pairs:
+      mahakam.io/managed: "true"
+      mahakam.io/env: {name}
+    includeSelectors: false
 patches:
   - patch: |
       apiVersion: v1
@@ -42,7 +47,6 @@ patches:
       kind: ConfigMap
       name: env-config
 "#,
-        base = base_abs.display(),
         name = env_name,
         repos = repos_json,
     );
@@ -62,5 +66,20 @@ patches:
     }
 
     info!(env = %env_name, "kustomization applied");
+    Ok(())
+}
+
+/// Recursively copies a directory tree from `src` to `dst`.
+fn copy_dir(src: &Path, dst: &Path) -> anyhow::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let dst_path = dst.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir(&entry.path(), &dst_path)?;
+        } else {
+            std::fs::copy(entry.path(), dst_path)?;
+        }
+    }
     Ok(())
 }

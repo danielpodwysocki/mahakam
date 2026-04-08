@@ -7,9 +7,11 @@ argo-cd:
 api:
   image: mahakam-api
   tag: latest
+  imagePullPolicy: IfNotPresent
   databaseUrl: sqlite:///data/mahakam.db
   environmentsBasePath: /app/environments/base
 
 web:
   image: mahakam-web
   tag: latest
+  imagePullPolicy: IfNotPresent

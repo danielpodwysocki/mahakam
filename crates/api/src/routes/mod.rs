@@ -24,7 +24,7 @@ pub fn router(state: AppState) -> Router {
                 .post(handlers::environments::create_environment),
         )
         .route(
-            "/api/v1/environments/:name",
+            "/api/v1/environments/{name}",
             axum::routing::delete(handlers::environments::delete_environment),
         )
         .with_state(state)

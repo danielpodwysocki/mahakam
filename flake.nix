@@ -27,6 +27,7 @@
               go-task
               skaffold
               kubectl
+              kubernetes-helm
               kind
               docker
               git

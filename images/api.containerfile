@@ -10,7 +10,7 @@ RUN cargo build --release --bin api
 
 FROM alpine:3.21 AS prod
 
-RUN apk add --no-cache curl bash ca-certificates
+RUN apk add --no-cache curl bash ca-certificates openssl
 
 # kubectl
 ARG KUBECTL_VERSION=v1.31.0

@@ -16,6 +16,7 @@ spec:
       containers:
         - name: web
           image: "{{ .Values.web.image }}:{{ .Values.web.tag }}"
+          imagePullPolicy: {{ .Values.web.imagePullPolicy | default "IfNotPresent" }}
           ports:
             - containerPort: 3001
           env:

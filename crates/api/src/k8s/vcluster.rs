@@ -5,22 +5,19 @@ use tracing::{error, info};
 pub async fn install_vcluster(env_name: &str) -> anyhow::Result<()> {
     let release = format!("vcluster-{env_name}");
     let namespace = format!("env-{env_name}");
-    let managed_label_value = "mahakam.io/managed=true";
-    let env_label_value = format!("mahakam.io/env={env_name}");
 
     info!(release = %release, namespace = %namespace, "installing vcluster");
 
     let status = Command::new("helm")
         .args([
-            "install",
+            "upgrade",
+            "--install",
             &release,
-            "vcluster/vcluster",
+            "vcluster",
+            "--repo",
+            "https://charts.loft.sh",
             "--namespace",
             &namespace,
-            "--set",
-            &format!("commonLabels[\"mahakam.io/managed\"]={managed_label_value}"),
-            "--set",
-            &format!("commonLabels[\"mahakam.io/env\"]={env_label_value}"),
             "--wait",
             "--timeout",
             "5m",
