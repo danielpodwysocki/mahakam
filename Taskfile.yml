@@ -35,6 +35,7 @@ tasks:
 
   cluster:
     desc: Create Kind cluster if it doesn't exist
+    run: once
     cmds:
       - (kind get clusters | grep danielpodwysocki) || kind create cluster --name danielpodwysocki --config=kind.yaml
       - kubectl config use-context kind-danielpodwysocki
