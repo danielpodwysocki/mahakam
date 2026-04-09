@@ -23,4 +23,5 @@ pub trait EnvironmentRepository: Send + Sync {
     async fn list(&self) -> anyhow::Result<Vec<Environment>>;
     async fn find_by_name(&self, name: &str) -> anyhow::Result<Option<Environment>>;
     async fn delete(&self, name: &str) -> anyhow::Result<()>;
+    async fn update_status(&self, name: &str, status: &str) -> anyhow::Result<()>;
 }

@@ -5,7 +5,7 @@ use axum::{
     Json,
 };
 use serde::Deserialize;
-use tracing::error;
+use tracing::{error, info};
 
 use shared::{
     repositories::environment::sqlite::SqliteEnvironmentRepository,
@@ -50,39 +50,49 @@ pub async fn create_environment(
         }
     };
 
-    if let Err(e) = crate::k8s::namespace::create_env_namespace(&state.kube_client, &env.name).await
-    {
-        error!("Failed to create namespace for {}: {}", env.name, e);
-        return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
-    }
+    // Provisioning runs in the background; the environment is returned immediately
+    // with status "pending" so the UI can show it right away.
+    let pool = state.pool.clone();
+    let kube_client = state.kube_client.clone();
+    let base_path = state.base_path.clone();
+    let env_name = env.name.clone();
+    let env_repos = env.repos.clone();
 
-    if let Err(e) = crate::k8s::vcluster::install_vcluster(&env.name).await {
-        error!("Failed to install vcluster for {}: {}", env.name, e);
-        return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
-    }
+    tokio::spawn(async move {
+        info!(env = %env_name, "background provisioning started");
+        let result: anyhow::Result<()> = async {
+            crate::k8s::namespace::create_env_namespace(&kube_client, &env_name).await?;
+            crate::k8s::vcluster::install_vcluster(&env_name).await?;
+            let kubeconfig =
+                crate::k8s::vcluster::wait_for_vcluster_kubeconfig(&kube_client, &env_name).await?;
+            crate::k8s::kustomize::apply_env_kustomization(
+                &env_name,
+                &env_repos,
+                &base_path,
+                &kubeconfig,
+            )
+            .await?;
+            Ok(())
+        }
+        .await;
 
-    let kubeconfig =
-        match crate::k8s::vcluster::wait_for_vcluster_kubeconfig(&state.kube_client, &env.name)
-            .await
-        {
-            Ok(kc) => kc,
-            Err(e) => {
-                error!("Failed to get vcluster kubeconfig for {}: {}", env.name, e);
-                return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+        let new_status = match result {
+            Ok(()) => {
+                info!(env = %env_name, "provisioning complete");
+                "ready"
+            }
+            Err(ref e) => {
+                error!(env = %env_name, error = %e, "provisioning failed");
+                "failed"
             }
         };
 
-    if let Err(e) = crate::k8s::kustomize::apply_env_kustomization(
-        &env.name,
-        &env.repos,
-        &state.base_path,
-        &kubeconfig,
-    )
-    .await
-    {
-        error!("Failed to apply kustomization for {}: {}", env.name, e);
-        return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
-    }
+        let repo = SqliteEnvironmentRepository::new(pool);
+        let svc = EnvironmentService::new(repo);
+        if let Err(e) = svc.update_status(&env_name, new_status).await {
+            error!(env = %env_name, error = %e, "failed to persist status update");
+        }
+    });
 
     (StatusCode::CREATED, Json(env)).into_response()
 }

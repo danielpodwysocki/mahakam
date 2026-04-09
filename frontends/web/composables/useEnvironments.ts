@@ -1,4 +1,4 @@
-import { ref } from 'vue'
+import { ref, getCurrentInstance, onUnmounted } from 'vue'
 import {
   fetchEnvironments,
   createEnvironment,
@@ -7,11 +7,18 @@ import {
   type CreateEnvironment,
 } from '../api/environments'
 
+const POLL_INTERVAL_MS = 3000
+
+function isSettled(env: Environment): boolean {
+  return env.status === 'ready' || env.status === 'failed'
+}
+
 /** Manages environment state and API interactions. */
 export function useEnvironments() {
   const environments = ref<Environment[]>([])
   const pending = ref(false)
   const error = ref<Error | null>(null)
+  let pollingTimer: ReturnType<typeof setInterval> | null = null
 
   /** Loads all environments from the API. */
   async function load(): Promise<void> {
@@ -26,10 +33,35 @@ export function useEnvironments() {
     }
   }
 
-  /** Creates an environment and appends it to the local list. */
+  function stopPolling(): void {
+    if (pollingTimer !== null) {
+      clearInterval(pollingTimer)
+      pollingTimer = null
+    }
+  }
+
+  function startPolling(): void {
+    if (pollingTimer !== null) return
+    pollingTimer = setInterval(async () => {
+      await load()
+      if (environments.value.every(isSettled)) {
+        stopPolling()
+      }
+    }, POLL_INTERVAL_MS)
+  }
+
+  // Clean up the timer when the owning component unmounts.
+  if (getCurrentInstance()) {
+    onUnmounted(stopPolling)
+  }
+
+  /** Creates an environment, appends it immediately with pending status, then polls until settled. */
   async function create(data: CreateEnvironment): Promise<void> {
     const env = await createEnvironment(data)
     environments.value = [...environments.value, env]
+    if (!isSettled(env)) {
+      startPolling()
+    }
   }
 
   /** Removes an environment by name. */
@@ -38,5 +70,5 @@ export function useEnvironments() {
     environments.value = environments.value.filter((e) => e.name !== name)
   }
 
-  return { environments, pending, error, load, create, remove }
+  return { environments, pending, error, load, create, remove, stopPolling }
 }

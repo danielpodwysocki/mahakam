@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { useEnvironments } from '../../../composables/useEnvironments'
 
 vi.mock('../../../api/environments', () => ({
@@ -24,6 +24,11 @@ const mockEnv = {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.useFakeTimers()
+})
+
+afterEach(() => {
+  vi.useRealTimers()
 })
 
 describe('useEnvironments', () => {
@@ -49,12 +54,48 @@ describe('useEnvironments', () => {
   })
 
   describe('create', () => {
-    it('appends environment to list', async () => {
+    it('appends environment to list immediately', async () => {
       vi.mocked(createEnvironment).mockResolvedValue(mockEnv)
-      const { environments, create } = useEnvironments()
+      const { environments, create, stopPolling } = useEnvironments()
       await create({ name: 'test-env', repos: ['https://github.com/foo/bar'] })
       expect(environments.value).toHaveLength(1)
       expect(environments.value[0].name).toBe('test-env')
+      stopPolling()
+    })
+
+    it('starts polling when created env is pending', async () => {
+      vi.mocked(createEnvironment).mockResolvedValue(mockEnv)
+      vi.mocked(fetchEnvironments).mockResolvedValue([{ ...mockEnv, status: 'ready' as const }])
+      const { environments, create } = useEnvironments()
+      await create({ name: 'test-env', repos: ['https://github.com/foo/bar'] })
+
+      await vi.advanceTimersByTimeAsync(3000)
+
+      expect(fetchEnvironments).toHaveBeenCalled()
+      expect(environments.value[0].status).toBe('ready')
+    })
+
+    it('stops polling once all environments are settled', async () => {
+      vi.mocked(createEnvironment).mockResolvedValue(mockEnv)
+      vi.mocked(fetchEnvironments).mockResolvedValue([{ ...mockEnv, status: 'ready' as const }])
+      const { create } = useEnvironments()
+      await create({ name: 'test-env', repos: ['https://github.com/foo/bar'] })
+
+      await vi.advanceTimersByTimeAsync(3000)
+      const callCount = vi.mocked(fetchEnvironments).mock.calls.length
+
+      await vi.advanceTimersByTimeAsync(3000)
+      // No additional fetches — polling stopped after envs settled
+      expect(vi.mocked(fetchEnvironments).mock.calls.length).toBe(callCount)
+    })
+
+    it('does not start polling when created env is immediately ready', async () => {
+      vi.mocked(createEnvironment).mockResolvedValue({ ...mockEnv, status: 'ready' as const })
+      const { create } = useEnvironments()
+      await create({ name: 'test-env', repos: ['https://github.com/foo/bar'] })
+
+      await vi.advanceTimersByTimeAsync(3000)
+      expect(fetchEnvironments).not.toHaveBeenCalled()
     })
   })
 

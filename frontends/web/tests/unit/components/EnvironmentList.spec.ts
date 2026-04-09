@@ -20,13 +20,52 @@ describe('EnvironmentList', () => {
     expect(wrapper.find('table').exists()).toBe(true)
     expect(wrapper.text()).toContain('test-env')
     expect(wrapper.text()).toContain('env-test-env')
-    expect(wrapper.text()).toContain('pending')
   })
 
-  it('calls onDelete with the environment name when Delete clicked', async () => {
-    const onDelete = vi.fn()
+  it('shows "connecting" label for pending status', () => {
     const wrapper = mount(EnvironmentList, {
-      props: { environments: [mockEnv], onDelete },
+      props: { environments: [mockEnv], onDelete: vi.fn() },
+    })
+    expect(wrapper.text()).toContain('connecting')
+    expect(wrapper.text()).not.toContain('pending')
+  })
+
+  it('shows "connecting" label for provisioning status', () => {
+    const env: Environment = { ...mockEnv, status: 'provisioning' }
+    const wrapper = mount(EnvironmentList, {
+      props: { environments: [env], onDelete: vi.fn() },
+    })
+    expect(wrapper.text()).toContain('connecting')
+  })
+
+  it('shows "ready" label for ready status', () => {
+    const env: Environment = { ...mockEnv, status: 'ready' }
+    const wrapper = mount(EnvironmentList, {
+      props: { environments: [env], onDelete: vi.fn() },
+    })
+    expect(wrapper.text()).toContain('ready')
+  })
+
+  it('disables delete button when env is not settled', () => {
+    const wrapper = mount(EnvironmentList, {
+      props: { environments: [mockEnv], onDelete: vi.fn() },
+    })
+    expect(wrapper.find('button').attributes('disabled')).toBeDefined()
+  })
+
+  it('enables delete button when env is ready', () => {
+    const env: Environment = { ...mockEnv, status: 'ready' }
+    const wrapper = mount(EnvironmentList, {
+      props: { environments: [env], onDelete: vi.fn() },
+    })
+    expect(wrapper.find('button').attributes('disabled')).toBeUndefined()
+  })
+
+  it('calls onDelete with the environment name when Delete clicked on settled env', async () => {
+    const onDelete = vi.fn()
+    const env: Environment = { ...mockEnv, status: 'ready' }
+    const wrapper = mount(EnvironmentList, {
+      props: { environments: [env], onDelete },
     })
     await wrapper.find('button').trigger('click')
     expect(onDelete).toHaveBeenCalledWith('test-env')
@@ -36,7 +75,6 @@ describe('EnvironmentList', () => {
     const wrapper = mount(EnvironmentList, {
       props: { environments: [], onDelete: vi.fn() },
     })
-    // tbody should have no rows
     expect(wrapper.findAll('tbody tr')).toHaveLength(0)
   })
 

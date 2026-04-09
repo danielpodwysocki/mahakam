@@ -5,6 +5,14 @@ defineProps<{
   environments: Environment[]
   onDelete: (name: string) => void
 }>()
+
+function statusLabel(status: string): string {
+  return status === 'pending' || status === 'provisioning' ? 'connecting' : status
+}
+
+function isSettled(status: string): boolean {
+  return status === 'ready' || status === 'failed'
+}
 </script>
 
 <template>
@@ -28,11 +36,15 @@ defineProps<{
           <td class="td-name">{{ env.name }}</td>
           <td class="td-ns">{{ env.namespace }}</td>
           <td>
-            <span :class="['status-badge', `status-${env.status}`]">{{ env.status }}</span>
+            <span :class="['status-badge', `status-${env.status}`]">{{ statusLabel(env.status) }}</span>
           </td>
           <td class="td-repos">{{ env.repos.join(', ') }}</td>
           <td>
-            <button class="btn-delete" @click="onDelete(env.name)">Delete</button>
+            <button
+              class="btn-delete"
+              :disabled="!isSettled(env.status)"
+              @click="onDelete(env.name)"
+            >Delete</button>
           </td>
         </tr>
       </tbody>
@@ -160,8 +172,13 @@ defineProps<{
   transition: all 0.15s;
 }
 
-.btn-delete:hover {
+.btn-delete:hover:not(:disabled) {
   background: var(--danger-bg);
   border-color: var(--danger);
+}
+
+.btn-delete:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 </style>

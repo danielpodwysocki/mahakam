@@ -58,6 +58,11 @@ impl<R: EnvironmentRepository> EnvironmentService<R> {
     pub async fn delete(&self, name: &str) -> Result<()> {
         self.repo.delete(name).await
     }
+
+    /// Updates the status of an environment.
+    pub async fn update_status(&self, name: &str, status: &str) -> Result<()> {
+        self.repo.update_status(name, status).await
+    }
 }
 
 #[cfg(test)]
@@ -172,5 +177,25 @@ mod tests {
         mock.expect_delete().once().returning(|_| Ok(()));
         let svc = EnvironmentService::new(mock);
         assert!(svc.delete("test").await.is_ok());
+    }
+
+    // ── update_status ────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn update_status_delegates_to_repo() {
+        let mut mock = MockEnvironmentRepository::new();
+        mock.expect_update_status().once().returning(|_, _| Ok(()));
+        let svc = EnvironmentService::new(mock);
+        assert!(svc.update_status("test", "ready").await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn update_status_propagates_repo_error() {
+        let mut mock = MockEnvironmentRepository::new();
+        mock.expect_update_status()
+            .once()
+            .returning(|_, _| Err(anyhow!("db error")));
+        let svc = EnvironmentService::new(mock);
+        assert!(svc.update_status("test", "ready").await.is_err());
     }
 }

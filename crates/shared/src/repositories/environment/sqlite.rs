@@ -85,4 +85,13 @@ impl EnvironmentRepository for SqliteEnvironmentRepository {
             .await?;
         Ok(())
     }
+
+    async fn update_status(&self, name: &str, status: &str) -> anyhow::Result<()> {
+        sqlx::query("UPDATE environments SET status = ? WHERE name = ?")
+            .bind(status)
+            .bind(name)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
 }
