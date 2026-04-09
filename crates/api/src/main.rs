@@ -28,6 +28,9 @@ struct Config {
         default_value = "/app/environments/base"
     )]
     environments_base_path: PathBuf,
+
+    #[arg(long, env = "VIEWER_IMAGE", default_value = "mahakam-ttyd:latest")]
+    viewer_image: String,
 }
 
 #[tokio::main]
@@ -65,6 +68,7 @@ async fn main() -> Result<()> {
         pool,
         kube_client: Arc::new(kube_client),
         base_path: Arc::new(config.environments_base_path),
+        viewer_image: Arc::new(config.viewer_image),
     };
 
     let app = routes::router(state);

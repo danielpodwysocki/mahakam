@@ -26,6 +26,8 @@ spec:
               value: sqlite:///data/mahakam.db
             - name: ENVIRONMENTS_BASE_PATH
               value: /app/environments/base
+            - name: VIEWER_IMAGE
+              value: mahakam-ttyd:latest
           volumeMounts:
             - name: data
               mountPath: /data

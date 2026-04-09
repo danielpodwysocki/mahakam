@@ -146,8 +146,16 @@ tasks:
     cmds:
       - cargo fmt
 
+  load-viewer:
+    desc: Build and load the ttyd viewer image into the Kind cluster (run after cluster is up)
+    cmds:
+      - docker build -f images/ttyd.containerfile -t mahakam-ttyd:latest .
+      - kind load docker-image mahakam-ttyd:latest --name danielpodwysocki
+    deps: [cluster]
+
   docker-build:
     desc: Build container images locally
     cmds:
       - docker build -f images/api.containerfile -t mahakam-api:latest .
       - docker build -f images/web.containerfile -t mahakam-web:latest .
+      - docker build -f images/ttyd.containerfile -t mahakam-ttyd:latest .

@@ -1,5 +1,7 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import type { Environment } from '../api/environments'
+import TerminalViewer from './TerminalViewer.vue'
 
 defineProps<{
   environments: Environment[]
@@ -13,6 +15,10 @@ function statusLabel(status: string): string {
 function isSettled(status: string): boolean {
   return status === 'ready' || status === 'failed'
 }
+
+const activeConsole = ref<string | null>(null)
+function openConsole(name: string) { activeConsole.value = name }
+function closeConsole() { activeConsole.value = null }
 </script>
 
 <template>
@@ -39,16 +45,27 @@ function isSettled(status: string): boolean {
             <span :class="['status-badge', `status-${env.status}`]">{{ statusLabel(env.status) }}</span>
           </td>
           <td class="td-repos">{{ env.repos.join(', ') }}</td>
-          <td>
+          <td class="td-actions">
             <button
               class="btn-delete"
               :disabled="!isSettled(env.status)"
               @click="onDelete(env.name)"
             >Delete</button>
+            <button
+              class="btn-console"
+              :disabled="env.status !== 'ready'"
+              @click="openConsole(env.name)"
+            >Open Console</button>
           </td>
         </tr>
       </tbody>
     </table>
+
+    <TerminalViewer
+      v-if="activeConsole"
+      :env-name="activeConsole"
+      @close="closeConsole"
+    />
   </div>
 </template>
 
@@ -178,6 +195,33 @@ function isSettled(status: string): boolean {
 }
 
 .btn-delete:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.td-actions {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.btn-console {
+  font-family: inherit;
+  font-size: 0.72rem;
+  padding: 0.28rem 0.65rem;
+  background: transparent;
+  border: 1px solid rgba(139, 96, 60, 0.4);
+  color: var(--accent);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-console:hover:not(:disabled) {
+  background: rgba(139, 96, 60, 0.15);
+  border-color: var(--accent);
+}
+
+.btn-console:disabled {
   opacity: 0.35;
   cursor: not-allowed;
 }

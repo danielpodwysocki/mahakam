@@ -12,6 +12,8 @@ pub struct AppState {
     pub pool: SqlitePool,
     pub kube_client: Arc<kube::Client>,
     pub base_path: Arc<PathBuf>,
+    /// OCI image reference for the viewer (ttyd) container spawned per environment.
+    pub viewer_image: Arc<String>,
 }
 
 /// Constructs the top-level application router.

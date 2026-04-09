@@ -55,6 +55,7 @@ pub async fn create_environment(
     let pool = state.pool.clone();
     let kube_client = state.kube_client.clone();
     let base_path = state.base_path.clone();
+    let viewer_image = state.viewer_image.clone();
     let env_name = env.name.clone();
     let env_repos = env.repos.clone();
 
@@ -70,6 +71,17 @@ pub async fn create_environment(
                 &env_repos,
                 &base_path,
                 &kubeconfig,
+            )
+            .await?;
+            crate::k8s::viewer::spawn_viewer(
+                &kube_client,
+                &env_name,
+                crate::k8s::viewer::ViewerSpec {
+                    image: (*viewer_image).clone(),
+                    path_prefix: format!("/projects/viewers/{env_name}"),
+                    port: 7681,
+                    env_vars: vec![("ENV_NAME".to_string(), env_name.clone())],
+                },
             )
             .await?;
             Ok(())
@@ -103,6 +115,11 @@ pub async fn delete_environment(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> impl IntoResponse {
+    // Remove the viewer HTTPRoute first. Best-effort: log but don't block deletion.
+    if let Err(e) = crate::k8s::viewer::teardown_viewer(&name).await {
+        error!("Failed to teardown viewer for {}: {}", name, e);
+    }
+
     if let Err(e) = crate::k8s::vcluster::uninstall_vcluster(&name).await {
         error!("Failed to uninstall vcluster for {}: {}", name, e);
         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
