@@ -133,20 +133,23 @@ pub async fn spawn_viewer(client: &Client, env_name: &str, spec: ViewerSpec) -> 
 
     // ── ReferenceGrant ────────────────────────────────────────────────────────
     // Allows the HTTPRoute in mahakam-system to reference the Service in env-{name}.
+    // concat! avoids \n\ line-continuation stripping YAML indentation spaces.
     kubectl_apply(&format!(
-        "apiVersion: gateway.networking.k8s.io/v1beta1\n\
-kind: ReferenceGrant\n\
-metadata:\n\
-  name: allow-mahakam-gateway\n\
-  namespace: {ns}\n\
-spec:\n\
-  from:\n\
-    - group: gateway.networking.k8s.io\n\
-      kind: HTTPRoute\n\
-      namespace: {route_ns}\n\
-  to:\n\
-    - group: \"\"\n\
-      kind: Service\n",
+        concat!(
+            "apiVersion: gateway.networking.k8s.io/v1beta1\n",
+            "kind: ReferenceGrant\n",
+            "metadata:\n",
+            "  name: allow-mahakam-gateway\n",
+            "  namespace: {ns}\n",
+            "spec:\n",
+            "  from:\n",
+            "    - group: gateway.networking.k8s.io\n",
+            "      kind: HTTPRoute\n",
+            "      namespace: {route_ns}\n",
+            "  to:\n",
+            "    - group: \"\"\n",
+            "      kind: Service\n",
+        ),
         ns = ns,
         route_ns = ROUTE_NAMESPACE,
     ))
@@ -156,24 +159,26 @@ spec:\n\
     // ── HTTPRoute ─────────────────────────────────────────────────────────────
     // Lives in mahakam-system, routes /projects/viewers/{name}/* to the viewer Service.
     kubectl_apply(&format!(
-        "apiVersion: gateway.networking.k8s.io/v1\n\
-kind: HTTPRoute\n\
-metadata:\n\
-  name: {name}\n\
-  namespace: {route_ns}\n\
-spec:\n\
-  parentRefs:\n\
-    - name: {gw}\n\
-      namespace: {route_ns}\n\
-  rules:\n\
-    - matches:\n\
-        - path:\n\
-            type: PathPrefix\n\
-            value: {path}\n\
-      backendRefs:\n\
-        - name: {name}\n\
-          namespace: {ns}\n\
-          port: {port}\n",
+        concat!(
+            "apiVersion: gateway.networking.k8s.io/v1\n",
+            "kind: HTTPRoute\n",
+            "metadata:\n",
+            "  name: {name}\n",
+            "  namespace: {route_ns}\n",
+            "spec:\n",
+            "  parentRefs:\n",
+            "    - name: {gw}\n",
+            "      namespace: {route_ns}\n",
+            "  rules:\n",
+            "    - matches:\n",
+            "        - path:\n",
+            "            type: PathPrefix\n",
+            "            value: {path}\n",
+            "      backendRefs:\n",
+            "        - name: {name}\n",
+            "          namespace: {ns}\n",
+            "          port: {port}\n",
+        ),
         name = name,
         route_ns = ROUTE_NAMESPACE,
         gw = GATEWAY_NAME,
