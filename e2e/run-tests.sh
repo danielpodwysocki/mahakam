@@ -71,6 +71,42 @@ echo "$LIST"
 assert_contains "$ENV_NAME" "$LIST" "env list contains $ENV_NAME after create"
 
 echo ""
+echo "--- waiting for $ENV_NAME to become ready (up to 15 min) ---"
+READY=0
+for i in $(seq 1 180); do
+  STATUS_VAL=$(curl -s "$API/api/v1/environments" \
+    | grep -o "\"status\":\"[^\"]*\"" | head -1 | grep -o "[^\"]*$")
+  if [ "$STATUS_VAL" = "ready" ]; then
+    READY=1
+    break
+  fi
+  if [ "$STATUS_VAL" = "failed" ]; then
+    break
+  fi
+  sleep 5
+done
+if [ "$READY" = "1" ]; then
+  pass "$ENV_NAME reached ready status"
+else
+  fail "$ENV_NAME did not reach ready status (last status: $STATUS_VAL)"
+fi
+
+echo ""
+echo "--- GET viewer terminal endpoint for $ENV_NAME ---"
+if [ "$READY" = "1" ]; then
+  VIEWER_URL="http://viewer-${ENV_NAME}.env-${ENV_NAME}:7681/projects/viewers/${ENV_NAME}/"
+  VIEWER_HTTP=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$VIEWER_URL")
+  echo "HTTP $VIEWER_HTTP ($VIEWER_URL)"
+  if [ "$VIEWER_HTTP" = "200" ]; then
+    pass "viewer endpoint returns 200"
+  else
+    fail "viewer endpoint returned $VIEWER_HTTP (expected 200)"
+  fi
+else
+  fail "skipping viewer test — environment not ready"
+fi
+
+echo ""
 echo "--- DELETE /api/v1/environments/$ENV_NAME ---"
 HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE "$API/api/v1/environments/$ENV_NAME")
 echo "HTTP $HTTP_STATUS"

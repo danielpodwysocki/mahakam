@@ -103,7 +103,9 @@ tasks:
     cmds:
       - skaffold build --file-output .skaffold-build.json
       - skaffold deploy -a .skaffold-build.json --load-images=true
-    deps: [cluster]
+      - docker build -f images/ttyd.containerfile -t mahakam-ttyd:latest .
+      - kind load docker-image mahakam-ttyd:latest --name danielpodwysocki
+    deps: [cluster, install-argocd]
 
   cluster-down:
     desc: Stop and delete the Kind cluster
