@@ -133,59 +133,32 @@ pub async fn spawn_viewer(client: &Client, env_name: &str, spec: ViewerSpec) -> 
 
     // ── ReferenceGrant ────────────────────────────────────────────────────────
     // Allows the HTTPRoute in mahakam-system to reference the Service in env-{name}.
-    // concat! avoids \n\ line-continuation stripping YAML indentation spaces.
-    kubectl_apply(&format!(
-        concat!(
-            "apiVersion: gateway.networking.k8s.io/v1beta1\n",
-            "kind: ReferenceGrant\n",
-            "metadata:\n",
-            "  name: allow-mahakam-gateway\n",
-            "  namespace: {ns}\n",
-            "spec:\n",
-            "  from:\n",
-            "    - group: gateway.networking.k8s.io\n",
-            "      kind: HTTPRoute\n",
-            "      namespace: {route_ns}\n",
-            "  to:\n",
-            "    - group: \"\"\n",
-            "      kind: Service\n",
-        ),
-        ns = ns,
-        route_ns = ROUTE_NAMESPACE,
-    ))
+    kubectl_apply(&serde_json::json!({
+        "apiVersion": "gateway.networking.k8s.io/v1beta1",
+        "kind": "ReferenceGrant",
+        "metadata": { "name": "allow-mahakam-gateway", "namespace": ns },
+        "spec": {
+            "from": [{ "group": "gateway.networking.k8s.io", "kind": "HTTPRoute", "namespace": ROUTE_NAMESPACE }],
+            "to":   [{ "group": "", "kind": "Service" }],
+        },
+    }))
     .await?;
     info!(env = %env_name, "viewer ReferenceGrant applied");
 
     // ── HTTPRoute ─────────────────────────────────────────────────────────────
     // Lives in mahakam-system, routes /projects/viewers/{name}/* to the viewer Service.
-    kubectl_apply(&format!(
-        concat!(
-            "apiVersion: gateway.networking.k8s.io/v1\n",
-            "kind: HTTPRoute\n",
-            "metadata:\n",
-            "  name: {name}\n",
-            "  namespace: {route_ns}\n",
-            "spec:\n",
-            "  parentRefs:\n",
-            "    - name: {gw}\n",
-            "      namespace: {route_ns}\n",
-            "  rules:\n",
-            "    - matches:\n",
-            "        - path:\n",
-            "            type: PathPrefix\n",
-            "            value: {path}\n",
-            "      backendRefs:\n",
-            "        - name: {name}\n",
-            "          namespace: {ns}\n",
-            "          port: {port}\n",
-        ),
-        name = name,
-        route_ns = ROUTE_NAMESPACE,
-        gw = GATEWAY_NAME,
-        path = spec.path_prefix,
-        ns = ns,
-        port = port_i32,
-    ))
+    kubectl_apply(&serde_json::json!({
+        "apiVersion": "gateway.networking.k8s.io/v1",
+        "kind": "HTTPRoute",
+        "metadata": { "name": name, "namespace": ROUTE_NAMESPACE },
+        "spec": {
+            "parentRefs": [{ "name": GATEWAY_NAME, "namespace": ROUTE_NAMESPACE }],
+            "rules": [{
+                "matches": [{ "path": { "type": "PathPrefix", "value": spec.path_prefix } }],
+                "backendRefs": [{ "name": name, "namespace": ns, "port": port_i32 }],
+            }],
+        },
+    }))
     .await?;
     info!(env = %env_name, route = %name, "viewer HTTPRoute applied");
 
@@ -221,7 +194,10 @@ pub async fn teardown_viewer(env_name: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn kubectl_apply(yaml: &str) -> anyhow::Result<()> {
+async fn kubectl_apply(resource: &serde_json::Value) -> anyhow::Result<()> {
+    let yaml = serde_yaml::to_string(resource)
+        .map_err(|e| anyhow::anyhow!("failed to serialize resource to YAML: {e}"))?;
+
     let mut child = Command::new("kubectl")
         .args(["apply", "-f", "-"])
         .stdin(Stdio::piped())

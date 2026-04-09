@@ -56,13 +56,13 @@ pub async fn create_env_application(
 ) -> anyhow::Result<()> {
     let app_name = format!("env-{}", spec.env_name);
 
-    let helm_values = format!(
-        "envName: {env}\nargocdNamespace: {ns}\nargocdProject: {proj}\nvclusterChartVersion: {ver}\n",
-        env = spec.env_name,
-        ns = spec.argocd_namespace,
-        proj = spec.argocd_project,
-        ver = spec.vcluster_chart_version,
-    );
+    let helm_values = serde_yaml::to_string(&serde_json::json!({
+        "envName": spec.env_name,
+        "argocdNamespace": spec.argocd_namespace,
+        "argocdProject": spec.argocd_project,
+        "vclusterChartVersion": spec.vcluster_chart_version,
+    }))
+    .map_err(|e| anyhow::anyhow!("failed to serialize helm values: {e}"))?;
 
     let app_json = serde_json::json!({
         "apiVersion": "argoproj.io/v1alpha1",

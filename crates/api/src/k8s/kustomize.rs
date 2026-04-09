@@ -32,33 +32,33 @@ pub async fn apply_env_kustomization(
     copy_dir(base_path, &base_copy)?;
 
     let repos_json = serde_json::to_string(repos)?;
-    let kustomization = format!(
-        r#"apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-resources:
-  - ../base
-namespace: env-{name}
-labels:
-  - pairs:
-      mahakam.io/managed: "true"
-      mahakam.io/env: {name}
-    includeSelectors: false
-patches:
-  - patch: |
-      apiVersion: v1
-      kind: ConfigMap
-      metadata:
-        name: env-config
-      data:
-        ENV_NAME: {name}
-        REPOS: '{repos}'
-    target:
-      kind: ConfigMap
-      name: env-config
-"#,
-        name = env_name,
-        repos = repos_json,
-    );
+
+    // Build the patch body as a structured value; serde_yaml serialises it as a
+    // block scalar (|) which is what kustomize expects for the patch field.
+    let patch_body = serde_yaml::to_string(&serde_json::json!({
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": { "name": "env-config" },
+        "data": { "ENV_NAME": env_name, "REPOS": repos_json },
+    }))
+    .map_err(|e| anyhow::anyhow!("failed to serialize patch body: {e}"))?;
+
+    let kustomization = serde_yaml::to_string(&serde_json::json!({
+        "apiVersion": "kustomize.config.k8s.io/v1beta1",
+        "kind": "Kustomization",
+        "resources": ["../base"],
+        "namespace": format!("env-{env_name}"),
+        "labels": [{
+            "pairs": { "mahakam.io/managed": "true", "mahakam.io/env": env_name },
+            "includeSelectors": false,
+        }],
+        "patches": [{
+            "patch": patch_body,
+            "target": { "kind": "ConfigMap", "name": "env-config" },
+        }],
+    }))
+    .map_err(|e| anyhow::anyhow!("failed to serialize kustomization: {e}"))?;
+
     std::fs::write(overlay_dir.join("kustomization.yaml"), &kustomization)?;
 
     // Build a kube client targeting the vcluster API server.
