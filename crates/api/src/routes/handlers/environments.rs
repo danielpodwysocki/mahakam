@@ -93,6 +93,10 @@ pub async fn create_environment(
             let kubeconfig =
                 crate::k8s::vcluster::wait_for_vcluster_kubeconfig(&kube_client, &env_name).await?;
 
+            // Wait for the vcluster API server to accept connections — the pod may be
+            // Running (and thus Healthy in ArgoCD) before the API server is ready.
+            crate::k8s::vcluster::wait_for_vcluster_api_ready(&env_name, &kubeconfig).await?;
+
             // Apply the base kustomization overlay inside the vcluster.
             crate::k8s::kustomize::apply_env_kustomization(
                 &env_name,

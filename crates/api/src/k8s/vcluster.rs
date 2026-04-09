@@ -1,5 +1,9 @@
-use k8s_openapi::api::core::v1::Secret;
-use kube::{api::Api, Client};
+use k8s_openapi::api::core::v1::{Namespace, Secret};
+use kube::{
+    api::Api,
+    config::{KubeConfigOptions, Kubeconfig},
+    Client, Config,
+};
 use tokio::time::{sleep, timeout, Duration};
 use tracing::{info, warn};
 
@@ -13,6 +17,9 @@ const KUBECONFIG_LOCALHOST: &str = "https://localhost:8443";
 
 const KUBECONFIG_WAIT_TIMEOUT_SECS: u64 = 300;
 const KUBECONFIG_POLL_INTERVAL_SECS: u64 = 5;
+
+const API_READY_TIMEOUT_SECS: u64 = 120;
+const API_READY_POLL_INTERVAL_SECS: u64 = 3;
 
 /// Polls for the vcluster kubeconfig secret until it appears, then returns its bytes.
 ///
@@ -71,6 +78,47 @@ pub async fn wait_for_vcluster_kubeconfig(
             "timed out after {}s waiting for vcluster kubeconfig secret {}",
             KUBECONFIG_WAIT_TIMEOUT_SECS,
             secret_name
+        )
+    })?
+}
+
+/// Polls the vcluster API server (via `kubeconfig`) until it accepts connections.
+///
+/// The vcluster pod may be Running (and thus ArgoCD shows Healthy) before its
+/// internal API server has finished starting. This function retries a cheap
+/// `list namespaces` call until it succeeds or the timeout expires.
+pub async fn wait_for_vcluster_api_ready(env_name: &str, kubeconfig: &[u8]) -> anyhow::Result<()> {
+    let kubeconfig_text = std::str::from_utf8(kubeconfig)
+        .map_err(|e| anyhow::anyhow!("kubeconfig is not valid UTF-8: {e}"))?;
+    let parsed = Kubeconfig::from_yaml(kubeconfig_text)
+        .map_err(|e| anyhow::anyhow!("failed to parse vcluster kubeconfig: {e}"))?;
+    let config = Config::from_custom_kubeconfig(parsed, &KubeConfigOptions::default())
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to build vcluster client config: {e}"))?;
+    let client = Client::try_from(config)
+        .map_err(|e| anyhow::anyhow!("failed to create vcluster client: {e}"))?;
+
+    info!(env = %env_name, "waiting for vcluster API server to accept connections");
+
+    timeout(Duration::from_secs(API_READY_TIMEOUT_SECS), async {
+        loop {
+            match Api::<Namespace>::all(client.clone())
+                .list(&Default::default())
+                .await
+            {
+                Ok(_) => return Ok::<(), anyhow::Error>(()),
+                Err(e) => {
+                    warn!(env = %env_name, error = %e, "vcluster API not ready, retrying");
+                    sleep(Duration::from_secs(API_READY_POLL_INTERVAL_SECS)).await;
+                }
+            }
+        }
+    })
+    .await
+    .map_err(|_| {
+        anyhow::anyhow!(
+            "timed out after {}s waiting for vcluster API server to be ready",
+            API_READY_TIMEOUT_SECS
         )
     })?
 }
