@@ -28,6 +28,14 @@ spec:
               value: /app/environments/base
             - name: VIEWER_IMAGE
               value: mahakam-ttyd:latest
+            - name: REPO_URL
+              value: https://github.com/danielpodwysocki/mahakam.git
+            - name: REPO_REVISION
+              value: HEAD
+            - name: ARGOCD_NAMESPACE
+              value: argocd
+            - name: VCLUSTER_CHART_VERSION
+              value: "0.33.1"
           volumeMounts:
             - name: data
               mountPath: /data

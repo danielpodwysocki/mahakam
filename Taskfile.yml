@@ -43,13 +43,13 @@ tasks:
     desc: Start development environment with Skaffold
     cmds:
       - skaffold dev --port-forward=pods
-    deps: [cluster, install-vcluster-operator, install-envoy-gateway]
+    deps: [cluster, install-argocd, install-envoy-gateway]
 
   install:
     desc: Bootstrap Kind cluster with ArgoCD + mahakam via Helm
     cmds:
       - task: cluster
-      - task: install-vcluster-operator
+      - task: install-argocd
       - task: install-envoy-gateway
       - helm dependency update chart/mahakam
       - helm upgrade --install mahakam chart/mahakam --namespace mahakam-system --create-namespace --wait
@@ -61,21 +61,15 @@ tasks:
     cmds:
       - helm uninstall mahakam --namespace mahakam-system --ignore-not-found
 
-  add-vcluster-repo:
-    desc: Add vcluster Helm repository (run once)
+  install-argocd:
+    desc: Install ArgoCD into the cluster (run once per cluster)
     cmds:
-      - helm repo add vcluster https://charts.loft.sh || true
-      - helm repo update
-
-  install-vcluster-operator:
-    desc: Install the vCluster platform operator into the cluster (run once per cluster)
-    cmds:
-      - helm upgrade --install vcluster-platform vcluster-platform
-          --repo https://charts.loft.sh
-          --namespace vcluster-system
+      - helm upgrade --install argocd argo-cd
+          --repo https://argoproj.github.io/argo-helm
+          --namespace argocd
           --create-namespace
           --wait
-    deps: [add-vcluster-repo]
+    deps: [cluster]
 
   install-envoy-gateway:
     desc: Install Envoy Gateway v1.7.1 into the cluster (run once per cluster)

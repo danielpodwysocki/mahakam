@@ -33,8 +33,15 @@ pub async fn list_environments(State(state): State<AppState>) -> impl IntoRespon
     }
 }
 
-/// POST /api/v1/environments — creates a DB record, provisions the namespace and vcluster,
-/// then applies the base kustomization inside the vcluster.
+/// POST /api/v1/environments — creates a DB record and returns immediately.
+///
+/// Provisioning runs in the background:
+/// 1. An outer ArgoCD Application (`env-{name}`) is created, which manages:
+///    - wave -1: Namespace `env-{name}` (labeled for mahakam)
+///    - wave  0: Inner Application `vcluster-{name}` (installs the vcluster Helm chart)
+/// 2. We wait for the outer Application to reach Healthy+Synced.
+/// 3. The vcluster kubeconfig secret is retrieved and the base kustomization is applied.
+/// 4. A ttyd viewer Deployment/Service/Route is spawned in the environment namespace.
 pub async fn create_environment(
     State(state): State<AppState>,
     Json(body): Json<CreateEnvironmentRequest>,
@@ -50,22 +57,43 @@ pub async fn create_environment(
         }
     };
 
-    // Provisioning runs in the background; the environment is returned immediately
-    // with status "pending" so the UI can show it right away.
     let pool = state.pool.clone();
     let kube_client = state.kube_client.clone();
     let base_path = state.base_path.clone();
     let viewer_image = state.viewer_image.clone();
+    let repo_url = state.repo_url.clone();
+    let repo_revision = state.repo_revision.clone();
+    let argocd_namespace = state.argocd_namespace.clone();
+    let vcluster_chart_version = state.vcluster_chart_version.clone();
     let env_name = env.name.clone();
     let env_repos = env.repos.clone();
 
     tokio::spawn(async move {
         info!(env = %env_name, "background provisioning started");
         let result: anyhow::Result<()> = async {
-            crate::k8s::namespace::create_env_namespace(&kube_client, &env_name).await?;
-            crate::k8s::vcluster::install_vcluster(&env_name).await?;
+            // Create the outer ArgoCD Application; ArgoCD handles namespace + vcluster.
+            crate::k8s::argocd::create_env_application(
+                &kube_client,
+                &crate::k8s::argocd::EnvApplicationSpec {
+                    env_name: &env_name,
+                    repo_url: &repo_url,
+                    repo_revision: &repo_revision,
+                    argocd_namespace: &argocd_namespace,
+                    argocd_project: "default",
+                    vcluster_chart_version: &vcluster_chart_version,
+                },
+            )
+            .await?;
+
+            // Block until namespace + vcluster are reconciled and healthy.
+            crate::k8s::argocd::wait_for_env_healthy(&kube_client, &env_name, &argocd_namespace)
+                .await?;
+
+            // Retrieve the kubeconfig the vcluster chart wrote as a Secret.
             let kubeconfig =
                 crate::k8s::vcluster::wait_for_vcluster_kubeconfig(&kube_client, &env_name).await?;
+
+            // Apply the base kustomization overlay inside the vcluster.
             crate::k8s::kustomize::apply_env_kustomization(
                 &env_name,
                 &env_repos,
@@ -73,6 +101,8 @@ pub async fn create_environment(
                 &kubeconfig,
             )
             .await?;
+
+            // Spawn the ttyd console viewer in the environment namespace.
             crate::k8s::viewer::spawn_viewer(
                 &kube_client,
                 &env_name,
@@ -84,6 +114,7 @@ pub async fn create_environment(
                 },
             )
             .await?;
+
             Ok(())
         }
         .await;
@@ -109,24 +140,31 @@ pub async fn create_environment(
     (StatusCode::CREATED, Json(env)).into_response()
 }
 
-/// DELETE /api/v1/environments/:name — uninstalls the vcluster, tears down the namespace,
-/// and removes the DB record.
+/// DELETE /api/v1/environments/:name
+///
+/// Deletes the viewer HTTPRoute, then the outer ArgoCD Application (cascade:
+/// the finalizer unwinds the inner vcluster Application and the namespace),
+/// then removes the DB record.
 pub async fn delete_environment(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> impl IntoResponse {
-    // Remove the viewer HTTPRoute first. Best-effort: log but don't block deletion.
+    // Remove the viewer HTTPRoute first (it lives in mahakam-system, not the env namespace,
+    // so ArgoCD cascade won't reach it).
     if let Err(e) = crate::k8s::viewer::teardown_viewer(&name).await {
         error!("Failed to teardown viewer for {}: {}", name, e);
     }
 
-    if let Err(e) = crate::k8s::vcluster::uninstall_vcluster(&name).await {
-        error!("Failed to uninstall vcluster for {}: {}", name, e);
-        return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
-    }
-
-    if let Err(e) = crate::k8s::namespace::delete_env_namespace(&state.kube_client, &name).await {
-        error!("Failed to delete namespace for {}: {}", name, e);
+    // Delete the outer Application; its finalizer cascades through the inner Application
+    // (vcluster Helm release) and then the namespace — in reverse-wave order.
+    if let Err(e) = crate::k8s::argocd::delete_env_application(
+        &state.kube_client,
+        &name,
+        &state.argocd_namespace,
+    )
+    .await
+    {
+        error!("Failed to delete ArgoCD Application for {}: {}", name, e);
         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
 

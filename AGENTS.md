@@ -125,10 +125,21 @@ Every environment namespace is labeled `mahakam.io/managed=true`. Never delete l
 manually — use the DELETE `/api/v1/environments/:name` endpoint.
 
 ### Running the stack
-- `task install` — bootstrap Kind + ArgoCD + mahakam via Helm (takes a few minutes)
-- `task develop` — Skaffold hot-reload dev loop (requires Kind cluster)
+- `task install` — bootstrap Kind + vCluster + Envoy Gateway + mahakam via Helm (takes a few minutes)
+- `task develop` — Skaffold hot-reload dev loop (requires Kind cluster with EG installed)
+- `task port-forward-gateway` — forward the Envoy Gateway to localhost:8080 (web + API together)
 - `task test` — Rust unit tests + frontend vitest
 - `task coverage` — 100% line coverage gate on shared services
+
+### Envoy Gateway
+Traffic entry point for the mahakam stack. Lives in `envoy-gateway-system` (Helm) with the routing
+config in `kube/gateway.yaml`.
+- `GatewayClass` `mahakam` → Envoy Gateway controller
+- `Gateway` `mahakam` in `mahakam-system`, port 80
+- `HTTPRoute` `mahakam-api`: `/api/v1/*` → `mahakam-api:3000`
+- `HTTPRoute` `mahakam-web`: `/*` → `mahakam-web:3001`
+
+After `task install`, run `task port-forward-gateway` and open http://localhost:8080.
 - `task coverage-frontend` — 100% coverage gate on frontend layers
 
 

@@ -1,0 +1,221 @@
+use kube::{
+    api::{Api, DeleteParams, DynamicObject, PostParams},
+    discovery::ApiResource,
+    Client,
+};
+use tokio::time::{sleep, timeout, Duration};
+use tracing::{info, warn};
+
+const APP_GROUP: &str = "argoproj.io";
+const APP_VERSION: &str = "v1alpha1";
+const APP_KIND: &str = "Application";
+const APP_PLURAL: &str = "applications";
+const CASCADE_FINALIZER: &str = "resources-finalizer.argocd.argoproj.io";
+
+const HEALTH_WAIT_TIMEOUT_SECS: u64 = 600;
+const DELETE_WAIT_TIMEOUT_SECS: u64 = 300;
+const POLL_INTERVAL_SECS: u64 = 5;
+
+/// Parameters for the outer ArgoCD Application created per environment.
+pub struct EnvApplicationSpec<'a> {
+    pub env_name: &'a str,
+    /// Git repository URL containing `chart/environment/`.
+    pub repo_url: &'a str,
+    /// Git revision (branch, tag, or SHA). "HEAD" tracks the default branch.
+    pub repo_revision: &'a str,
+    /// Namespace where ArgoCD is installed.
+    pub argocd_namespace: &'a str,
+    /// ArgoCD AppProject for all environment Applications.
+    pub argocd_project: &'a str,
+    /// vcluster Helm chart version to pin in the inner Application.
+    pub vcluster_chart_version: &'a str,
+}
+
+fn application_api(client: &Client, namespace: &str) -> Api<DynamicObject> {
+    let ar = ApiResource {
+        group: APP_GROUP.into(),
+        version: APP_VERSION.into(),
+        api_version: format!("{APP_GROUP}/{APP_VERSION}"),
+        kind: APP_KIND.into(),
+        plural: APP_PLURAL.into(),
+    };
+    Api::namespaced_with(client.clone(), namespace, &ar)
+}
+
+/// Creates the outer ArgoCD Application for `env_name`.
+///
+/// The Application sources `chart/environment` from the mahakam git repository.
+/// When ArgoCD syncs it, two resources are created in order via sync waves:
+/// - wave -1: `Namespace env-{name}` (labeled for mahakam management)
+/// - wave  0: `Application vcluster-{name}` (installs the vcluster Helm chart)
+///
+/// Both child resources carry `resources-finalizer.argocd.argoproj.io` so cascade
+/// deletion unwinds everything in reverse-wave order when the outer App is deleted.
+pub async fn create_env_application(
+    client: &Client,
+    spec: &EnvApplicationSpec<'_>,
+) -> anyhow::Result<()> {
+    let app_name = format!("env-{}", spec.env_name);
+
+    let helm_values = format!(
+        "envName: {env}\nargocdNamespace: {ns}\nargocdProject: {proj}\nvclusterChartVersion: {ver}\n",
+        env = spec.env_name,
+        ns = spec.argocd_namespace,
+        proj = spec.argocd_project,
+        ver = spec.vcluster_chart_version,
+    );
+
+    let app_json = serde_json::json!({
+        "apiVersion": "argoproj.io/v1alpha1",
+        "kind": "Application",
+        "metadata": {
+            "name": app_name,
+            "namespace": spec.argocd_namespace,
+            "finalizers": [CASCADE_FINALIZER],
+        },
+        "spec": {
+            "project": spec.argocd_project,
+            "source": {
+                "repoURL": spec.repo_url,
+                "path": "chart/environment",
+                "targetRevision": spec.repo_revision,
+                "helm": {
+                    "values": helm_values,
+                },
+            },
+            "destination": {
+                "server": "https://kubernetes.default.svc",
+                "namespace": spec.argocd_namespace,
+            },
+            "syncPolicy": {
+                "automated": {
+                    "prune": true,
+                    "selfHeal": true,
+                },
+            },
+        },
+    });
+
+    let obj: DynamicObject = serde_json::from_value(app_json)
+        .map_err(|e| anyhow::anyhow!("failed to build Application object: {e}"))?;
+
+    let api = application_api(client, spec.argocd_namespace);
+    api.create(&PostParams::default(), &obj)
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to create Application {app_name}: {e}"))?;
+
+    info!(env = %spec.env_name, app = %app_name, "ArgoCD Application created");
+    Ok(())
+}
+
+/// Polls the outer Application until it is both `Healthy` and `Synced`.
+///
+/// Returns an error immediately if the Application enters `Degraded` health, or
+/// after 10 minutes if it has not reached the healthy state.
+pub async fn wait_for_env_healthy(
+    client: &Client,
+    env_name: &str,
+    argocd_namespace: &str,
+) -> anyhow::Result<()> {
+    let app_name = format!("env-{env_name}");
+    let api = application_api(client, argocd_namespace);
+
+    info!(env = %env_name, app = %app_name, "waiting for ArgoCD Application to be Healthy+Synced");
+
+    timeout(Duration::from_secs(HEALTH_WAIT_TIMEOUT_SECS), async {
+        loop {
+            match api.get(&app_name).await {
+                Ok(obj) => {
+                    let health = obj
+                        .data
+                        .pointer("/status/health/status")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Unknown");
+                    let sync = obj
+                        .data
+                        .pointer("/status/sync/status")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Unknown");
+
+                    info!(env = %env_name, health, sync, "ArgoCD Application status");
+
+                    if health == "Healthy" && sync == "Synced" {
+                        return Ok::<(), anyhow::Error>(());
+                    }
+
+                    if health == "Degraded" {
+                        let msg = obj
+                            .data
+                            .pointer("/status/conditions/0/message")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("no message");
+                        return Err(anyhow::anyhow!("Application {app_name} is Degraded: {msg}"));
+                    }
+                }
+                Err(kube::Error::Api(ref e)) if e.code == 404 => {
+                    warn!(env = %env_name, "Application not yet found, retrying");
+                }
+                Err(e) => return Err(anyhow::anyhow!(e)),
+            }
+            sleep(Duration::from_secs(POLL_INTERVAL_SECS)).await;
+        }
+    })
+    .await
+    .map_err(|_| {
+        anyhow::anyhow!(
+            "timed out after {}s waiting for Application {app_name} to be Healthy",
+            HEALTH_WAIT_TIMEOUT_SECS
+        )
+    })?
+}
+
+/// Deletes the outer Application and waits for cascade deletion to complete.
+///
+/// ArgoCD's `resources-finalizer` runs before the Application object is removed:
+/// it deletes the child vcluster Application (which in turn prunes the Helm
+/// release), then removes the namespace — unrolling everything in reverse-wave
+/// order without any explicit kubectl or helm calls from mahakam.
+pub async fn delete_env_application(
+    client: &Client,
+    env_name: &str,
+    argocd_namespace: &str,
+) -> anyhow::Result<()> {
+    let app_name = format!("env-{env_name}");
+    let api = application_api(client, argocd_namespace);
+
+    match api.delete(&app_name, &DeleteParams::default()).await {
+        Ok(_) => info!(env = %env_name, app = %app_name, "ArgoCD Application deletion requested"),
+        Err(kube::Error::Api(ref e)) if e.code == 404 => {
+            info!(env = %env_name, app = %app_name, "Application not found, skipping delete");
+            return Ok(());
+        }
+        Err(e) => {
+            return Err(anyhow::anyhow!(
+                "failed to delete Application {app_name}: {e}"
+            ))
+        }
+    }
+
+    // Block until the finalizer completes and the object is gone.
+    info!(env = %env_name, "waiting for cascade deletion to complete");
+    timeout(Duration::from_secs(DELETE_WAIT_TIMEOUT_SECS), async {
+        loop {
+            match api.get(&app_name).await {
+                Err(kube::Error::Api(ref e)) if e.code == 404 => {
+                    return Ok::<(), anyhow::Error>(());
+                }
+                Err(e) => return Err(anyhow::anyhow!(e)),
+                Ok(_) => {
+                    sleep(Duration::from_secs(POLL_INTERVAL_SECS)).await;
+                }
+            }
+        }
+    })
+    .await
+    .map_err(|_| {
+        anyhow::anyhow!(
+            "timed out after {}s waiting for Application {app_name} to be fully deleted",
+            DELETE_WAIT_TIMEOUT_SECS
+        )
+    })?
+}

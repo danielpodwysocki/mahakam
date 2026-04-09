@@ -14,6 +14,14 @@ pub struct AppState {
     pub base_path: Arc<PathBuf>,
     /// OCI image reference for the viewer (ttyd) container spawned per environment.
     pub viewer_image: Arc<String>,
+    /// Git repository URL containing `chart/environment/` (pulled by ArgoCD).
+    pub repo_url: Arc<String>,
+    /// Git revision ArgoCD tracks for the environment chart.
+    pub repo_revision: Arc<String>,
+    /// Namespace where ArgoCD is installed.
+    pub argocd_namespace: Arc<String>,
+    /// vcluster Helm chart version pinned in the inner Application.
+    pub vcluster_chart_version: Arc<String>,
 }
 
 /// Constructs the top-level application router.
