@@ -1,0 +1,64 @@
+# GatewayClass — cluster-scoped, references the Envoy Gateway controller.
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: mahakam
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+---
+# Gateway — single entry point for all mahakam traffic on port 80.
+# Routes are restricted to the mahakam-system namespace.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: mahakam
+  namespace: mahakam-system
+spec:
+  gatewayClassName: mahakam
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          from: Same
+---
+# API route — /api/v1/* goes directly to the mahakam-api service.
+# More specific prefix wins over the web catch-all below.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mahakam-api
+  namespace: mahakam-system
+spec:
+  parentRefs:
+    - name: mahakam
+      namespace: mahakam-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api/v1
+      backendRefs:
+        - name: mahakam-api
+          port: 3000
+---
+# Web route — everything else goes to the Nuxt frontend.
+# Nuxt server routes handle /api/* → /api/v1/* rewriting.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mahakam-web
+  namespace: mahakam-system
+spec:
+  parentRefs:
+    - name: mahakam
+      namespace: mahakam-system
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: mahakam-web
+          port: 3001

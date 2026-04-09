@@ -43,15 +43,18 @@ tasks:
     desc: Start development environment with Skaffold
     cmds:
       - skaffold dev --port-forward=pods
-    deps: [cluster, install-vcluster-operator]
+    deps: [cluster, install-vcluster-operator, install-envoy-gateway]
 
   install:
     desc: Bootstrap Kind cluster with ArgoCD + mahakam via Helm
     cmds:
       - task: cluster
       - task: install-vcluster-operator
+      - task: install-envoy-gateway
       - helm dependency update chart/mahakam
       - helm upgrade --install mahakam chart/mahakam --namespace mahakam-system --create-namespace --wait
+      - kubectl apply -f kube/gateway.yaml
+      - kubectl wait -n mahakam-system gateway/mahakam --for=condition=Accepted --timeout=300s
 
   uninstall:
     desc: Remove mahakam Helm release
@@ -73,6 +76,26 @@ tasks:
           --create-namespace
           --wait
     deps: [add-vcluster-repo]
+
+  install-envoy-gateway:
+    desc: Install Envoy Gateway v1.7.1 into the cluster (run once per cluster)
+    cmds:
+      - helm upgrade --install eg oci://docker.io/envoyproxy/gateway-helm
+          --version v1.7.1
+          -n envoy-gateway-system
+          --create-namespace
+          --wait
+    deps: [cluster]
+
+  port-forward-gateway:
+    desc: Forward the Envoy Gateway to localhost:8080 (web UI + API through one port)
+    cmds:
+      - |
+        SVC=$(kubectl get svc -n envoy-gateway-system \
+          -l "gateway.envoyproxy.io/owning-gateway-namespace=mahakam-system,gateway.envoyproxy.io/owning-gateway-name=mahakam" \
+          -o jsonpath='{.items[0].metadata.name}')
+        echo "Port-forwarding $SVC → localhost:8080"
+        kubectl -n envoy-gateway-system port-forward svc/${SVC} 8080:80
 
   verify-all:
     desc: Run the full skaffold verify sequence

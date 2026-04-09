@@ -7,3 +7,4 @@ resources:
   - web-deployment.yaml
   - web-service.yaml
   - dev-tooling.yaml
+  - gateway.yaml
