@@ -311,13 +311,9 @@ pub async fn update_env_application_status(
     let patch = serde_json::json!({
         "metadata": { "annotations": { ANN_STATUS: status } }
     });
-    api.patch(
-        &app_name,
-        &PatchParams::apply("mahakam").force(),
-        &Patch::Merge(&patch),
-    )
-    .await
-    .map_err(|e| anyhow::anyhow!("failed to update status annotation on {app_name}: {e}"))?;
+    api.patch(&app_name, &PatchParams::default(), &Patch::Merge(&patch))
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to update status annotation on {app_name}: {e}"))?;
 
     info!(env = %env_name, status, "ArgoCD Application status annotation updated");
     Ok(())
