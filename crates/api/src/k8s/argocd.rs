@@ -107,23 +107,42 @@ pub async fn create_env_application(
     Ok(())
 }
 
-/// Polls the outer Application until it is both `Healthy` and `Synced`.
+/// Polls the outer Application and then the inner vcluster Application until
+/// both are `Healthy` and `Synced`.
 ///
-/// Returns an error immediately if the Application enters `Degraded` health, or
-/// after 10 minutes if it has not reached the healthy state.
+/// The outer App (`env-{name}`) becomes Healthy quickly once it has created the
+/// namespace and the inner Application object, but the inner App
+/// (`vcluster-{name}`) only reaches Healthy after the vcluster Helm chart has
+/// fully installed. Waiting for both prevents connecting to the vcluster API
+/// server before it is ready.
 pub async fn wait_for_env_healthy(
     client: &Client,
     env_name: &str,
     argocd_namespace: &str,
 ) -> anyhow::Result<()> {
-    let app_name = format!("env-{env_name}");
+    let outer = format!("env-{env_name}");
+    let inner = format!("vcluster-{env_name}");
+    // Outer app manages namespace + inner Application object; must be Healthy+Synced.
+    wait_for_application_healthy(client, &outer, env_name, argocd_namespace, true).await?;
+    // vcluster mutates its own resources post-install, so ArgoCD perpetually shows
+    // OutOfSync for the inner app. We only need it to be Healthy (pod running).
+    wait_for_application_healthy(client, &inner, env_name, argocd_namespace, false).await
+}
+
+async fn wait_for_application_healthy(
+    client: &Client,
+    app_name: &str,
+    env_name: &str,
+    argocd_namespace: &str,
+    require_synced: bool,
+) -> anyhow::Result<()> {
     let api = application_api(client, argocd_namespace);
 
-    info!(env = %env_name, app = %app_name, "waiting for ArgoCD Application to be Healthy+Synced");
+    info!(env = %env_name, app = %app_name, require_synced, "waiting for ArgoCD Application to be Healthy");
 
     timeout(Duration::from_secs(HEALTH_WAIT_TIMEOUT_SECS), async {
         loop {
-            match api.get(&app_name).await {
+            match api.get(app_name).await {
                 Ok(obj) => {
                     let health = obj
                         .data
@@ -136,9 +155,10 @@ pub async fn wait_for_env_healthy(
                         .and_then(|v| v.as_str())
                         .unwrap_or("Unknown");
 
-                    info!(env = %env_name, health, sync, "ArgoCD Application status");
+                    info!(env = %env_name, app = %app_name, health, sync, "ArgoCD Application status");
 
-                    if health == "Healthy" && sync == "Synced" {
+                    let synced_ok = !require_synced || sync == "Synced";
+                    if health == "Healthy" && synced_ok {
                         return Ok::<(), anyhow::Error>(());
                     }
 
@@ -152,7 +172,7 @@ pub async fn wait_for_env_healthy(
                     }
                 }
                 Err(kube::Error::Api(ref e)) if e.code == 404 => {
-                    warn!(env = %env_name, "Application not yet found, retrying");
+                    warn!(env = %env_name, app = %app_name, "Application not yet found, retrying");
                 }
                 Err(e) => return Err(anyhow::anyhow!(e)),
             }

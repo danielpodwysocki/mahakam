@@ -75,7 +75,7 @@ echo "--- waiting for $ENV_NAME to become ready (up to 15 min) ---"
 READY=0
 for i in $(seq 1 180); do
   STATUS_VAL=$(curl -s "$API/api/v1/environments" \
-    | grep -o "\"status\":\"[^\"]*\"" | head -1 | grep -o "[^\"]*$")
+    | grep -o '"status":"[^"]*' | head -1 | sed 's/"status":"//')
   if [ "$STATUS_VAL" = "ready" ]; then
     READY=1
     break
