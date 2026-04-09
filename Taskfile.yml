@@ -43,13 +43,13 @@ tasks:
     desc: Start development environment with Skaffold
     cmds:
       - skaffold dev --port-forward=pods
-    deps: [cluster]
+    deps: [cluster, install-vcluster-operator]
 
   install:
     desc: Bootstrap Kind cluster with ArgoCD + mahakam via Helm
     cmds:
       - task: cluster
-      - task: add-vcluster-repo
+      - task: install-vcluster-operator
       - helm dependency update chart/mahakam
       - helm upgrade --install mahakam chart/mahakam --namespace mahakam-system --create-namespace --wait
 
@@ -64,10 +64,20 @@ tasks:
       - helm repo add vcluster https://charts.loft.sh || true
       - helm repo update
 
+  install-vcluster-operator:
+    desc: Install the vCluster platform operator into the cluster (run once per cluster)
+    cmds:
+      - helm upgrade --install vcluster-platform vcluster-platform
+          --repo https://charts.loft.sh
+          --namespace vcluster-system
+          --create-namespace
+          --wait
+    deps: [add-vcluster-repo]
+
   verify-all:
     desc: Run the full skaffold verify sequence
     cmds:
-      - skaffold verify -a .skaffold-build.json || (task cleanup && exit 1)
+      - skaffold verify -a .skaffold-build.json
     deps: [verify-dependencies]
 
   verify-dependencies:

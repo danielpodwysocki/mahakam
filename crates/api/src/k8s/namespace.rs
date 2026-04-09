@@ -5,7 +5,8 @@ use kube::{
     api::{ObjectMeta, PostParams},
     Api, Client,
 };
-use tracing::info;
+use tokio::time::{sleep, timeout, Duration};
+use tracing::{info, warn};
 
 /// Creates (or silently accepts an existing) namespace for the given environment.
 pub async fn create_env_namespace(client: &Client, env_name: &str) -> anyhow::Result<()> {
@@ -31,12 +32,43 @@ pub async fn create_env_namespace(client: &Client, env_name: &str) -> anyhow::Re
             Ok(())
         }
         Err(kube::Error::Api(e)) if e.code == 409 => {
-            // AlreadyExists — idempotent
-            info!(namespace = %ns_name, "namespace already exists");
+            // Namespace already exists — check if it is Terminating.
+            let existing = namespaces.get(&ns_name).await?;
+            let phase = existing
+                .status
+                .as_ref()
+                .and_then(|s| s.phase.as_deref())
+                .unwrap_or("");
+            if phase == "Terminating" {
+                warn!(namespace = %ns_name, "namespace is Terminating — waiting for deletion");
+                wait_for_namespace_gone(&namespaces, &ns_name).await?;
+                info!(namespace = %ns_name, "namespace gone, creating fresh");
+                namespaces.create(&PostParams::default(), &ns).await?;
+                info!(namespace = %ns_name, "created namespace");
+            } else {
+                info!(namespace = %ns_name, "namespace already exists");
+            }
             Ok(())
         }
         Err(e) => Err(e.into()),
     }
+}
+
+/// Polls until the namespace no longer exists (times out after 120 s).
+async fn wait_for_namespace_gone(namespaces: &Api<Namespace>, ns_name: &str) -> anyhow::Result<()> {
+    timeout(Duration::from_secs(120), async {
+        loop {
+            match namespaces.get(ns_name).await {
+                Err(kube::Error::Api(e)) if e.code == 404 => return Ok::<(), anyhow::Error>(()),
+                Err(e) => return Err(anyhow::anyhow!(e)),
+                Ok(_) => {
+                    sleep(Duration::from_secs(3)).await;
+                }
+            }
+        }
+    })
+    .await
+    .map_err(|_| anyhow::anyhow!("timed out waiting for namespace {ns_name} to be deleted"))?
 }
 
 /// Deletes the namespace for the given environment.

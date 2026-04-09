@@ -5,6 +5,7 @@
     "noEmit": true,
     "skipLibCheck": true
   },
+  "files": [".nuxt/nuxt.d.ts"],
   "include": ["**/*.ts", "**/*.vue", "**/*.d.ts"],
   "exclude": ["node_modules", ".nuxt", ".output", "dist", "vitest.config.ts", "nuxt.config.ts"]
 }

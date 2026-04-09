@@ -1,0 +1,10 @@
+target/
+.git/
+.direnv/
+node_modules/
+frontends/web/.nuxt/
+frontends/web/.output/
+frontends/web/node_modules/
+*.log
+kube/secrets.env
+mahakam-api

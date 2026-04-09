@@ -294,11 +294,16 @@ You can exec into the dev/test container via: `kubectl exec -n default -it deplo
 
 ## Validating your changes
 
-Here is how you validate your changes:
-- once the change is ready, ensure `task lint` passes
-- then, ensure your code passes `task test`
-- then, ensure service coverage is 100%: `task coverage` (fails if any service line is uncovered)
-- then, ensure your code passes the e2e suite: `task verify-all`
+Run `task lint` immediately after every Rust code change — before running tests, before
+deploying, before asking for review. Clippy catches wrong API usage, missing trait imports,
+and type mismatches that would otherwise only surface as compile errors or runtime failures
+inside a container. Fix all warnings before proceeding.
+
+Full validation sequence:
+- after every code edit: `task lint` (clippy + fmt check + frontend typecheck)
+- once the change is ready: `task test`
+- then ensure service coverage is 100%: `task coverage` (fails if any service line is uncovered)
+- then ensure your code passes the e2e suite: `task verify-all`
 
 
 ## How to navigate this codebase

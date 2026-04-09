@@ -33,7 +33,8 @@ pub async fn list_environments(State(state): State<AppState>) -> impl IntoRespon
     }
 }
 
-/// POST /api/v1/environments — creates an environment and provisions K8s resources.
+/// POST /api/v1/environments — creates a DB record, provisions the namespace and vcluster,
+/// then applies the base kustomization inside the vcluster.
 pub async fn create_environment(
     State(state): State<AppState>,
     Json(body): Json<CreateEnvironmentRequest>,
@@ -49,7 +50,6 @@ pub async fn create_environment(
         }
     };
 
-    // K8s provisioning — best-effort for MVP (log errors, return 500 if they occur).
     if let Err(e) = crate::k8s::namespace::create_env_namespace(&state.kube_client, &env.name).await
     {
         error!("Failed to create namespace for {}: {}", env.name, e);
@@ -61,9 +61,24 @@ pub async fn create_environment(
         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
 
-    if let Err(e) =
-        crate::k8s::kustomize::apply_env_kustomization(&env.name, &env.repos, &state.base_path)
+    let kubeconfig =
+        match crate::k8s::vcluster::wait_for_vcluster_kubeconfig(&state.kube_client, &env.name)
             .await
+        {
+            Ok(kc) => kc,
+            Err(e) => {
+                error!("Failed to get vcluster kubeconfig for {}: {}", env.name, e);
+                return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+            }
+        };
+
+    if let Err(e) = crate::k8s::kustomize::apply_env_kustomization(
+        &env.name,
+        &env.repos,
+        &state.base_path,
+        &kubeconfig,
+    )
+    .await
     {
         error!("Failed to apply kustomization for {}: {}", env.name, e);
         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
@@ -72,7 +87,8 @@ pub async fn create_environment(
     (StatusCode::CREATED, Json(env)).into_response()
 }
 
-/// DELETE /api/v1/environments/:name — tears down K8s resources and removes the record.
+/// DELETE /api/v1/environments/:name — uninstalls the vcluster, tears down the namespace,
+/// and removes the DB record.
 pub async fn delete_environment(
     State(state): State<AppState>,
     Path(name): Path<String>,

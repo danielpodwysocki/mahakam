@@ -23,7 +23,7 @@ export type CreateEnvironment = z.infer<typeof CreateEnvironmentSchema>
 
 /** Fetches all environments from the API. */
 export async function fetchEnvironments(): Promise<Environment[]> {
-  const response = await fetch('/backend/api/v1/environments')
+  const response = await fetch('/api/environments')
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`)
   }
@@ -33,7 +33,7 @@ export async function fetchEnvironments(): Promise<Environment[]> {
 
 /** Creates a new environment via the API. */
 export async function createEnvironment(data: CreateEnvironment): Promise<Environment> {
-  const response = await fetch('/backend/api/v1/environments', {
+  const response = await fetch('/api/environments', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -47,7 +47,7 @@ export async function createEnvironment(data: CreateEnvironment): Promise<Enviro
 
 /** Deletes an environment by name. */
 export async function deleteEnvironment(name: string): Promise<void> {
-  const response = await fetch(`/backend/api/v1/environments/${name}`, {
+  const response = await fetch(`/api/environments/${name}`, {
     method: 'DELETE',
   })
   if (!response.ok) {

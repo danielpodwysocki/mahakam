@@ -14,6 +14,9 @@ build:
     - image: mahakam-web
       docker:
         dockerfile: images/web.containerfile
+    - image: mahakam-e2e
+      docker:
+        dockerfile: images/e2e.containerfile
 manifests:
   kustomize:
     paths:
@@ -27,3 +30,10 @@ portForward:
     resourceName: mahakam-web
     port: 3001
     localPort: 3001
+verify:
+  - name: e2e-api
+    executionMode:
+      kubernetesCluster: {}
+    container:
+      name: e2e-api
+      image: mahakam-e2e
