@@ -1,5 +1,7 @@
+use shared::repositories::environment::Environment;
+
 use kube::{
-    api::{Api, DeleteParams, DynamicObject, PostParams},
+    api::{Api, DeleteParams, DynamicObject, ListParams, Patch, PatchParams, PostParams},
     discovery::ApiResource,
     Client,
 };
@@ -15,9 +17,18 @@ const CASCADE_FINALIZER: &str = "resources-finalizer.argocd.argoproj.io";
 const HEALTH_WAIT_TIMEOUT_SECS: u64 = 600;
 const POLL_INTERVAL_SECS: u64 = 5;
 
+const LABEL_MANAGED: &str = "mahakam.io/managed";
+const ANN_ID: &str = "mahakam.io/env-id";
+const ANN_REPOS: &str = "mahakam.io/env-repos";
+const ANN_CREATED_AT: &str = "mahakam.io/env-created-at";
+const ANN_STATUS: &str = "mahakam.io/env-status";
+
 /// Parameters for the outer ArgoCD Application created per environment.
 pub struct EnvApplicationSpec<'a> {
     pub env_name: &'a str,
+    pub env_id: &'a str,
+    pub env_repos: &'a [String],
+    pub env_created_at: &'a str,
     /// Git repository URL containing `chart/environment/`.
     pub repo_url: &'a str,
     /// Git revision (branch, tag, or SHA). "HEAD" tracks the default branch.
@@ -64,12 +75,22 @@ pub async fn create_env_application(
     }))
     .map_err(|e| anyhow::anyhow!("failed to serialize helm values: {e}"))?;
 
+    let repos_json = serde_json::to_string(spec.env_repos)
+        .map_err(|e| anyhow::anyhow!("failed to serialize repos: {e}"))?;
+
     let app_json = serde_json::json!({
         "apiVersion": "argoproj.io/v1alpha1",
         "kind": "Application",
         "metadata": {
             "name": app_name,
             "namespace": spec.argocd_namespace,
+            "labels": { LABEL_MANAGED: "true" },
+            "annotations": {
+                ANN_ID: spec.env_id,
+                ANN_REPOS: repos_json,
+                ANN_CREATED_AT: spec.env_created_at,
+                ANN_STATUS: "pending",
+            },
             "finalizers": [CASCADE_FINALIZER],
         },
         "spec": {
@@ -217,5 +238,87 @@ pub async fn delete_env_application(
         }
     }
 
+    Ok(())
+}
+
+/// Lists all mahakam-managed environments by reading ArgoCD Application annotations.
+///
+/// Applications are identified by the label `mahakam.io/managed=true`. This survives
+/// API pod restarts because the data lives in the ArgoCD Application objects, not
+/// in any local ephemeral store.
+pub async fn list_env_applications(
+    client: &Client,
+    argocd_namespace: &str,
+) -> anyhow::Result<Vec<Environment>> {
+    let api = application_api(client, argocd_namespace);
+    let lp = ListParams::default().labels(&format!("{LABEL_MANAGED}=true"));
+    let apps = api
+        .list(&lp)
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to list ArgoCD Applications: {e}"))?;
+
+    let mut envs = Vec::new();
+    for app in apps {
+        let annotations = app
+            .metadata
+            .annotations
+            .as_ref()
+            .cloned()
+            .unwrap_or_default();
+
+        let Some(name_raw) = app.metadata.name.as_deref() else {
+            continue;
+        };
+        let name = name_raw.trim_start_matches("env-").to_string();
+
+        let id = annotations
+            .get(ANN_ID)
+            .cloned()
+            .unwrap_or_else(|| name.clone());
+        let repos: Vec<String> = annotations
+            .get(ANN_REPOS)
+            .and_then(|s| serde_json::from_str(s).ok())
+            .unwrap_or_default();
+        let created_at = annotations.get(ANN_CREATED_AT).cloned().unwrap_or_default();
+        let status = annotations
+            .get(ANN_STATUS)
+            .cloned()
+            .unwrap_or_else(|| "pending".to_string());
+
+        envs.push(Environment {
+            id,
+            namespace: format!("env-{name}"),
+            name,
+            repos,
+            created_at,
+            status,
+        });
+    }
+
+    Ok(envs)
+}
+
+/// Patches the `mahakam.io/env-status` annotation on the Application for `env_name`.
+pub async fn update_env_application_status(
+    client: &Client,
+    env_name: &str,
+    argocd_namespace: &str,
+    status: &str,
+) -> anyhow::Result<()> {
+    let app_name = format!("env-{env_name}");
+    let api = application_api(client, argocd_namespace);
+
+    let patch = serde_json::json!({
+        "metadata": { "annotations": { ANN_STATUS: status } }
+    });
+    api.patch(
+        &app_name,
+        &PatchParams::apply("mahakam").force(),
+        &Patch::Merge(&patch),
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("failed to update status annotation on {app_name}: {e}"))?;
+
+    info!(env = %env_name, status, "ArgoCD Application status annotation updated");
     Ok(())
 }

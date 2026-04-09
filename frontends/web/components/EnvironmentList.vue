@@ -23,9 +23,9 @@ function closeConsole() { activeConsole.value = null }
 
 <template>
   <div>
-    <h2 class="section-title">Environments</h2>
+    <h2 class="section-title">Workspaces</h2>
     <p v-if="environments.length === 0" class="empty">
-      No environments yet.
+      No workspaces yet.
     </p>
     <table v-else class="env-table">
       <thead>

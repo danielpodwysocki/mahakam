@@ -4,6 +4,24 @@ use uuid::Uuid;
 
 use crate::repositories::environment::{Environment, EnvironmentRepository};
 
+/// Validates an environment name.
+///
+/// Rules: 1–63 characters, only lowercase ASCII letters, digits, and hyphens.
+pub fn validate_name(name: &str) -> Result<()> {
+    if name.is_empty() || name.len() > 63 {
+        return Err(anyhow!("name must be between 1 and 63 characters"));
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
+        return Err(anyhow!(
+            "name must contain only lowercase letters, digits, and hyphens"
+        ));
+    }
+    Ok(())
+}
+
 /// Business logic for environment lifecycle management.
 pub struct EnvironmentService<R: EnvironmentRepository> {
     repo: R,
@@ -19,17 +37,7 @@ impl<R: EnvironmentRepository> EnvironmentService<R> {
     ///
     /// Name rules: 1–63 characters, only lowercase ASCII letters, digits, and hyphens.
     pub async fn create(&self, name: String, repos: Vec<String>) -> Result<Environment> {
-        if name.is_empty() || name.len() > 63 {
-            return Err(anyhow!("name must be between 1 and 63 characters"));
-        }
-        if !name
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
-        {
-            return Err(anyhow!(
-                "name must contain only lowercase letters, digits, and hyphens"
-            ));
-        }
+        validate_name(&name)?;
         let id = Uuid::new_v4().to_string();
         let namespace = format!("env-{name}");
         let env = Environment {

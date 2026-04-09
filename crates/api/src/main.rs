@@ -1,8 +1,7 @@
-use std::{path::PathBuf, str::FromStr, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Result;
 use clap::Parser;
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
@@ -14,13 +13,6 @@ mod routes;
 struct Config {
     #[arg(long, env = "API_PORT", default_value = "3000")]
     port: u16,
-
-    #[arg(
-        long,
-        env = "DATABASE_URL",
-        default_value = "sqlite:///data/mahakam.db"
-    )]
-    database_url: String,
 
     #[arg(
         long,
@@ -56,32 +48,9 @@ async fn main() -> Result<()> {
         .init();
 
     let config = Config::parse();
-
-    // Ensure parent directory for SQLite database exists.
-    let db_path = config
-        .database_url
-        .trim_start_matches("sqlite://")
-        .trim_start_matches("sqlite:");
-    if let Some(parent) = PathBuf::from(db_path).parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)?;
-        }
-    }
-
-    let connect_opts =
-        SqliteConnectOptions::from_str(&config.database_url)?.create_if_missing(true);
-
-    let pool = SqlitePoolOptions::new()
-        .max_connections(5)
-        .connect_with(connect_opts)
-        .await?;
-
-    sqlx::migrate!("./migrations").run(&pool).await?;
-
     let kube_client = kube::Client::try_default().await?;
 
     let state = routes::AppState {
-        pool,
         kube_client: Arc::new(kube_client),
         base_path: Arc::new(config.environments_base_path),
         viewer_image: Arc::new(config.viewer_image),

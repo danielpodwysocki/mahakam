@@ -4,13 +4,12 @@ use axum::{
     response::IntoResponse,
     Json,
 };
+use chrono::Utc;
 use serde::Deserialize;
 use tracing::{error, info};
+use uuid::Uuid;
 
-use shared::{
-    repositories::environment::sqlite::SqliteEnvironmentRepository,
-    services::environment::EnvironmentService,
-};
+use shared::{repositories::environment::Environment, services::environment::validate_name};
 
 use crate::routes::AppState;
 
@@ -21,10 +20,12 @@ pub struct CreateEnvironmentRequest {
 }
 
 /// GET /api/v1/environments — returns all environments.
+///
+/// Reads directly from ArgoCD Application annotations; survives API pod restarts.
 pub async fn list_environments(State(state): State<AppState>) -> impl IntoResponse {
-    let repo = SqliteEnvironmentRepository::new(state.pool.clone());
-    let svc = EnvironmentService::new(repo);
-    match svc.list().await {
+    match crate::k8s::argocd::list_env_applications(&state.kube_client, &state.argocd_namespace)
+        .await
+    {
         Ok(envs) => (StatusCode::OK, Json(envs)).into_response(),
         Err(e) => {
             error!("Failed to list environments: {}", e);
@@ -33,71 +34,69 @@ pub async fn list_environments(State(state): State<AppState>) -> impl IntoRespon
     }
 }
 
-/// POST /api/v1/environments — creates a DB record and returns immediately.
+/// POST /api/v1/environments — creates an ArgoCD Application and returns immediately.
 ///
-/// Provisioning runs in the background:
-/// 1. An outer ArgoCD Application (`env-{name}`) is created, which manages:
-///    - wave -1: Namespace `env-{name}` (labeled for mahakam)
-///    - wave  0: Inner Application `vcluster-{name}` (installs the vcluster Helm chart)
-/// 2. We wait for the outer Application to reach Healthy+Synced.
-/// 3. The vcluster kubeconfig secret is retrieved and the base kustomization is applied.
-/// 4. A ttyd viewer Deployment/Service/Route is spawned in the environment namespace.
+/// The ArgoCD Application carries all environment metadata as annotations so the
+/// record survives pod restarts. Provisioning (waiting for vcluster, applying
+/// kustomization, spawning viewer) runs in the background and updates the status
+/// annotation when it settles.
 pub async fn create_environment(
     State(state): State<AppState>,
     Json(body): Json<CreateEnvironmentRequest>,
 ) -> impl IntoResponse {
-    let repo = SqliteEnvironmentRepository::new(state.pool.clone());
-    let svc = EnvironmentService::new(repo);
+    if let Err(e) = validate_name(&body.name) {
+        return (StatusCode::UNPROCESSABLE_ENTITY, e.to_string()).into_response();
+    }
 
-    let env = match svc.create(body.name, body.repos).await {
-        Ok(env) => env,
-        Err(e) => {
-            error!("Failed to create environment: {}", e);
-            return (StatusCode::UNPROCESSABLE_ENTITY, e.to_string()).into_response();
-        }
+    let env = Environment {
+        id: Uuid::new_v4().to_string(),
+        namespace: format!("env-{}", body.name),
+        name: body.name,
+        repos: body.repos,
+        status: "pending".to_string(),
+        created_at: Utc::now().to_rfc3339(),
     };
 
-    let pool = state.pool.clone();
+    // Create the ArgoCD Application now (synchronous) so the environment is
+    // immediately visible in list even before provisioning completes.
+    if let Err(e) = crate::k8s::argocd::create_env_application(
+        &state.kube_client,
+        &crate::k8s::argocd::EnvApplicationSpec {
+            env_name: &env.name,
+            env_id: &env.id,
+            env_repos: &env.repos,
+            env_created_at: &env.created_at,
+            repo_url: &state.repo_url,
+            repo_revision: &state.repo_revision,
+            argocd_namespace: &state.argocd_namespace,
+            argocd_project: "default",
+            vcluster_chart_version: &state.vcluster_chart_version,
+        },
+    )
+    .await
+    {
+        error!(env = %env.name, error = %e, "failed to create ArgoCD Application");
+        return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+    }
+
     let kube_client = state.kube_client.clone();
     let base_path = state.base_path.clone();
     let viewer_image = state.viewer_image.clone();
-    let repo_url = state.repo_url.clone();
-    let repo_revision = state.repo_revision.clone();
     let argocd_namespace = state.argocd_namespace.clone();
-    let vcluster_chart_version = state.vcluster_chart_version.clone();
     let env_name = env.name.clone();
     let env_repos = env.repos.clone();
 
     tokio::spawn(async move {
         info!(env = %env_name, "background provisioning started");
         let result: anyhow::Result<()> = async {
-            // Create the outer ArgoCD Application; ArgoCD handles namespace + vcluster.
-            crate::k8s::argocd::create_env_application(
-                &kube_client,
-                &crate::k8s::argocd::EnvApplicationSpec {
-                    env_name: &env_name,
-                    repo_url: &repo_url,
-                    repo_revision: &repo_revision,
-                    argocd_namespace: &argocd_namespace,
-                    argocd_project: "default",
-                    vcluster_chart_version: &vcluster_chart_version,
-                },
-            )
-            .await?;
-
-            // Block until namespace + vcluster are reconciled and healthy.
             crate::k8s::argocd::wait_for_env_healthy(&kube_client, &env_name, &argocd_namespace)
                 .await?;
 
-            // Retrieve the kubeconfig the vcluster chart wrote as a Secret.
             let kubeconfig =
                 crate::k8s::vcluster::wait_for_vcluster_kubeconfig(&kube_client, &env_name).await?;
 
-            // Wait for the vcluster API server to accept connections — the pod may be
-            // Running (and thus Healthy in ArgoCD) before the API server is ready.
             crate::k8s::vcluster::wait_for_vcluster_api_ready(&env_name, &kubeconfig).await?;
 
-            // Apply the base kustomization overlay inside the vcluster.
             crate::k8s::kustomize::apply_env_kustomization(
                 &env_name,
                 &env_repos,
@@ -106,7 +105,6 @@ pub async fn create_environment(
             )
             .await?;
 
-            // Spawn the ttyd console viewer in the environment namespace.
             crate::k8s::viewer::spawn_viewer(
                 &kube_client,
                 &env_name,
@@ -134,10 +132,15 @@ pub async fn create_environment(
             }
         };
 
-        let repo = SqliteEnvironmentRepository::new(pool);
-        let svc = EnvironmentService::new(repo);
-        if let Err(e) = svc.update_status(&env_name, new_status).await {
-            error!(env = %env_name, error = %e, "failed to persist status update");
+        if let Err(e) = crate::k8s::argocd::update_env_application_status(
+            &kube_client,
+            &env_name,
+            &argocd_namespace,
+            new_status,
+        )
+        .await
+        {
+            error!(env = %env_name, error = %e, "failed to update status annotation");
         }
     });
 
@@ -146,38 +149,26 @@ pub async fn create_environment(
 
 /// DELETE /api/v1/environments/:name
 ///
-/// Deletes the viewer HTTPRoute, then the outer ArgoCD Application (cascade:
-/// the finalizer unwinds the inner vcluster Application and the namespace),
-/// then removes the DB record.
+/// Deletes the viewer HTTPRoute then the outer ArgoCD Application (cascade:
+/// the finalizer unwinds the inner vcluster Application and the namespace).
 pub async fn delete_environment(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> impl IntoResponse {
-    // Remove the viewer HTTPRoute first (it lives in mahakam-system, not the env namespace,
-    // so ArgoCD cascade won't reach it).
     if let Err(e) = crate::k8s::viewer::teardown_viewer(&name).await {
         error!("Failed to teardown viewer for {}: {}", name, e);
     }
 
-    // Delete the outer Application; its finalizer cascades through the inner Application
-    // (vcluster Helm release) and then the namespace — in reverse-wave order.
-    if let Err(e) = crate::k8s::argocd::delete_env_application(
+    match crate::k8s::argocd::delete_env_application(
         &state.kube_client,
         &name,
         &state.argocd_namespace,
     )
     .await
     {
-        error!("Failed to delete ArgoCD Application for {}: {}", name, e);
-        return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
-    }
-
-    let repo = SqliteEnvironmentRepository::new(state.pool.clone());
-    let svc = EnvironmentService::new(repo);
-    match svc.delete(&name).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => {
-            error!("Failed to delete environment record for {}: {}", name, e);
+            error!("Failed to delete ArgoCD Application for {}: {}", name, e);
             (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
         }
     }

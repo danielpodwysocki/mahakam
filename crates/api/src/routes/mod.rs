@@ -1,7 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
 use axum::{routing::get, Router};
-use sqlx::SqlitePool;
 use tower_http::cors::CorsLayer;
 
 pub mod handlers;
@@ -9,7 +8,6 @@ pub mod handlers;
 /// Shared application state injected into all handlers.
 #[derive(Clone)]
 pub struct AppState {
-    pub pool: SqlitePool,
     pub kube_client: Arc<kube::Client>,
     pub base_path: Arc<PathBuf>,
     /// OCI image reference for the viewer (ttyd) container spawned per environment.

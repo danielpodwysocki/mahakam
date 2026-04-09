@@ -45,7 +45,7 @@ function handleSubmit() {
 
 <template>
   <form @submit.prevent="handleSubmit">
-    <h2 class="section-title">New Environment</h2>
+    <h2 class="section-title">New Workspace</h2>
 
     <div class="field">
       <label class="label" for="env-name">Name</label>

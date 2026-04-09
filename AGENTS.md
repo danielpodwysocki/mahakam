@@ -210,6 +210,27 @@ When making changes to services:
 - Comment public items for rustdoc generation (succinct style using `///`)
 - Only write non-rustdoc comments when describing obscure upstream behavior or non-obvious invariants
 
+### Kubernetes / YAML construction
+
+**Never build YAML from strings** (no `format!`, `concat!`, raw strings with substitutions, or `\n\` line-continuation). Rust's line-continuation escape eats leading whitespace on the next source line, silently corrupting YAML indentation in ways that are invisible to the compiler and hard to spot in review.
+
+**Always use `serde_json::json!()` + `serde_yaml::to_string()`** to construct any YAML document — Kubernetes manifests, Helm values, kustomize overlays, patch bodies, etc.:
+
+```rust
+// ✅ correct
+let yaml = serde_yaml::to_string(&serde_json::json!({
+    "apiVersion": "v1",
+    "kind": "ConfigMap",
+    "metadata": { "name": name, "namespace": ns },
+    "data": { "key": value },
+}))?;
+
+// ❌ wrong — \n\ strips indentation; concat!/raw strings are fragile
+let yaml = format!("apiVersion: v1\nkind: ConfigMap\n  name: {name}\n");
+```
+
+This applies equally to nested YAML (e.g. a kustomize `patch:` field whose value is itself a YAML document — serialize the inner doc with `serde_yaml::to_string()` first, then embed the resulting string in the outer `json!`).
+
 ### Architecture patterns
 - All data access must go through the repository pattern — no direct data operations outside repositories
 - Define each repository as a trait; pass implementations via dependency injection (function parameters or struct fields)
