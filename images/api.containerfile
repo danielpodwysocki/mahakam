@@ -28,7 +28,8 @@ COPY crates/ ./crates/
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/app/target \
-    cargo build --release --bin api \
+    find crates -name "*.rs" | xargs touch \
+ && cargo build --release --bin api \
  && cp target/release/api /api
 
 # ── Runtime image ─────────────────────────────────────────────────────────────

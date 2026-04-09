@@ -3,6 +3,8 @@ kind: Config
 metadata:
   name: mahakam
 build:
+  local:
+    useBuildkit: true
   artifacts:
     - image: mahakam-api
       docker:

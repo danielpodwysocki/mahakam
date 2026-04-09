@@ -13,7 +13,6 @@ const APP_PLURAL: &str = "applications";
 const CASCADE_FINALIZER: &str = "resources-finalizer.argocd.argoproj.io";
 
 const HEALTH_WAIT_TIMEOUT_SECS: u64 = 600;
-const DELETE_WAIT_TIMEOUT_SECS: u64 = 300;
 const POLL_INTERVAL_SECS: u64 = 5;
 
 /// Parameters for the outer ArgoCD Application created per environment.
@@ -169,12 +168,15 @@ pub async fn wait_for_env_healthy(
     })?
 }
 
-/// Deletes the outer Application and waits for cascade deletion to complete.
+/// Requests deletion of the outer Application and returns immediately.
 ///
-/// ArgoCD's `resources-finalizer` runs before the Application object is removed:
-/// it deletes the child vcluster Application (which in turn prunes the Helm
-/// release), then removes the namespace — unrolling everything in reverse-wave
-/// order without any explicit kubectl or helm calls from mahakam.
+/// ArgoCD's `resources-finalizer` handles cascade cleanup asynchronously:
+/// it prunes the inner vcluster Application (and its Helm release) then removes
+/// the namespace — unrolling everything in reverse-wave order without any
+/// explicit kubectl or helm calls from mahakam.
+///
+/// The caller does not need to wait for cascade completion; ArgoCD will finish
+/// in the background. Treating a 404 as success means calling this twice is safe.
 pub async fn delete_env_application(
     client: &Client,
     env_name: &str,
@@ -186,8 +188,7 @@ pub async fn delete_env_application(
     match api.delete(&app_name, &DeleteParams::default()).await {
         Ok(_) => info!(env = %env_name, app = %app_name, "ArgoCD Application deletion requested"),
         Err(kube::Error::Api(ref e)) if e.code == 404 => {
-            info!(env = %env_name, app = %app_name, "Application not found, skipping delete");
-            return Ok(());
+            info!(env = %env_name, app = %app_name, "Application not found, nothing to delete");
         }
         Err(e) => {
             return Err(anyhow::anyhow!(
@@ -196,26 +197,5 @@ pub async fn delete_env_application(
         }
     }
 
-    // Block until the finalizer completes and the object is gone.
-    info!(env = %env_name, "waiting for cascade deletion to complete");
-    timeout(Duration::from_secs(DELETE_WAIT_TIMEOUT_SECS), async {
-        loop {
-            match api.get(&app_name).await {
-                Err(kube::Error::Api(ref e)) if e.code == 404 => {
-                    return Ok::<(), anyhow::Error>(());
-                }
-                Err(e) => return Err(anyhow::anyhow!(e)),
-                Ok(_) => {
-                    sleep(Duration::from_secs(POLL_INTERVAL_SECS)).await;
-                }
-            }
-        }
-    })
-    .await
-    .map_err(|_| {
-        anyhow::anyhow!(
-            "timed out after {}s waiting for Application {app_name} to be fully deleted",
-            DELETE_WAIT_TIMEOUT_SECS
-        )
-    })?
+    Ok(())
 }
