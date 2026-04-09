@@ -1,8 +1,11 @@
+# syntax=docker/dockerfile:1
 FROM node:24-alpine AS build
 
 WORKDIR /app
 COPY frontends/web/package*.json ./
-RUN npm ci
+
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci
 
 COPY frontends/web/ ./
 RUN npm run build

@@ -7,10 +7,6 @@ build:
     - image: mahakam-api
       docker:
         dockerfile: images/api.containerfile
-      sync:
-        manual:
-          - src: "crates/**/*.rs"
-            dest: /app/source/crates
     - image: mahakam-web
       docker:
         dockerfile: images/web.containerfile
