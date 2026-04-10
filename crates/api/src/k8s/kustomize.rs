@@ -12,13 +12,13 @@ use kube::{
 use tokio::process::Command;
 use tracing::{error, info, warn};
 
-/// Applies a per-environment kustomize overlay generated from `base_path` inside the vcluster
+/// Applies a per-workspace kustomize overlay generated from `base_path` inside the vcluster
 /// identified by `kubeconfig`.
 ///
 /// Uses `kubectl kustomize` (local file processing — no cluster access) to render the overlay,
 /// then creates the target namespace and applies each resource via the kube-rs API.
-pub async fn apply_env_kustomization(
-    env_name: &str,
+pub async fn apply_ws_kustomization(
+    ws_name: &str,
     repos: &[String],
     base_path: &Path,
     kubeconfig: &[u8],
@@ -38,8 +38,8 @@ pub async fn apply_env_kustomization(
     let patch_body = serde_yaml::to_string(&serde_json::json!({
         "apiVersion": "v1",
         "kind": "ConfigMap",
-        "metadata": { "name": "env-config" },
-        "data": { "ENV_NAME": env_name, "REPOS": repos_json },
+        "metadata": { "name": "ws-config" },
+        "data": { "WS_NAME": ws_name, "REPOS": repos_json },
     }))
     .map_err(|e| anyhow::anyhow!("failed to serialize patch body: {e}"))?;
 
@@ -47,14 +47,14 @@ pub async fn apply_env_kustomization(
         "apiVersion": "kustomize.config.k8s.io/v1beta1",
         "kind": "Kustomization",
         "resources": ["../base"],
-        "namespace": format!("env-{env_name}"),
+        "namespace": format!("ws-{ws_name}"),
         "labels": [{
-            "pairs": { "mahakam.io/managed": "true", "mahakam.io/env": env_name },
+            "pairs": { "mahakam.io/managed": "true", "mahakam.io/ws": ws_name },
             "includeSelectors": false,
         }],
         "patches": [{
             "patch": patch_body,
-            "target": { "kind": "ConfigMap", "name": "env-config" },
+            "target": { "kind": "ConfigMap", "name": "ws-config" },
         }],
     }))
     .map_err(|e| anyhow::anyhow!("failed to serialize kustomization: {e}"))?;
@@ -74,14 +74,14 @@ pub async fn apply_env_kustomization(
         .map_err(|e| anyhow::anyhow!("failed to create vcluster client: {e}"))?;
 
     // Create the target namespace inside the vcluster (it starts empty).
-    let ns_name = format!("env-{env_name}");
+    let ns_name = format!("ws-{ws_name}");
     let namespaces: Api<Namespace> = Api::all(vcluster_client.clone());
     let ns = Namespace {
         metadata: ObjectMeta {
             name: Some(ns_name.clone()),
             labels: Some(BTreeMap::from([
                 ("mahakam.io/managed".to_string(), "true".to_string()),
-                ("mahakam.io/env".to_string(), env_name.to_string()),
+                ("mahakam.io/ws".to_string(), ws_name.to_string()),
             ])),
             ..Default::default()
         },
@@ -100,7 +100,7 @@ pub async fn apply_env_kustomization(
     }
 
     // Render the kustomize overlay to YAML (local file operation — no cluster access).
-    info!(env = %env_name, overlay = %overlay_dir.display(), "rendering kustomize overlay");
+    info!(ws = %ws_name, overlay = %overlay_dir.display(), "rendering kustomize overlay");
     let build_output = Command::new("kubectl")
         .args(["kustomize", &overlay_dir.display().to_string()])
         .output()
@@ -108,8 +108,8 @@ pub async fn apply_env_kustomization(
 
     if !build_output.status.success() {
         let stderr = String::from_utf8_lossy(&build_output.stderr);
-        error!(env = %env_name, "kubectl kustomize failed: {stderr}");
-        anyhow::bail!("kubectl kustomize failed for env {env_name}: {stderr}");
+        error!(ws = %ws_name, "kubectl kustomize failed: {stderr}");
+        anyhow::bail!("kubectl kustomize failed for ws {ws_name}: {stderr}");
     }
 
     let manifests_yaml = String::from_utf8(build_output.stdout)?;
@@ -143,13 +143,13 @@ pub async fn apply_env_kustomization(
             .map_err(|e| anyhow::anyhow!("failed to deserialize {kind}: {e}"))?;
 
         let Some((ar, caps)) = discovery.resolve_gvk(&gvk) else {
-            warn!(env = %env_name, kind = %kind, "GVK not found in vcluster, skipping");
+            warn!(ws = %ws_name, kind = %kind, "GVK not found in vcluster, skipping");
             continue;
         };
 
         let obj_ns = dyn_obj
             .namespace()
-            .unwrap_or_else(|| format!("env-{env_name}"));
+            .unwrap_or_else(|| format!("ws-{ws_name}"));
         let api: Api<DynamicObject> = match caps.scope {
             Scope::Namespaced => Api::namespaced_with(vcluster_client.clone(), &obj_ns, &ar),
             Scope::Cluster => Api::all_with(vcluster_client.clone(), &ar),
@@ -164,10 +164,10 @@ pub async fn apply_env_kustomization(
         .await
         .map_err(|e| anyhow::anyhow!("failed to apply {kind}/{name}: {e}"))?;
 
-        info!(env = %env_name, kind = %kind, name = %name, "applied resource in vcluster");
+        info!(ws = %ws_name, kind = %kind, name = %name, "applied resource in vcluster");
     }
 
-    info!(env = %env_name, "kustomization applied inside vcluster");
+    info!(ws = %ws_name, "kustomization applied inside vcluster");
     Ok(())
 }
 

@@ -1,4 +1,0 @@
-envName: ""
-argocdNamespace: argocd
-argocdProject: default
-vclusterChartVersion: "0.33.1"

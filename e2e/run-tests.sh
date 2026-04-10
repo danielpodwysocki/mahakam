@@ -1,7 +1,7 @@
 #!/bin/sh
 
 API="${API_BASE_URL:-http://mahakam-api.mahakam-system:3000}"
-ENV_NAME="e2e-test"
+WS_NAME="e2e-test"
 PASS=0
 FAIL=0
 
@@ -41,40 +41,40 @@ echo "API: $API"
 echo ""
 
 # --- Clean up any leftover state from previous runs ---
-echo "--- cleanup: removing leftover $ENV_NAME if present ---"
-curl -s -X DELETE "$API/api/v1/environments/$ENV_NAME" > /dev/null 2>&1 || true
+echo "--- cleanup: removing leftover $WS_NAME if present ---"
+curl -s -X DELETE "$API/api/v1/workspaces/$WS_NAME" > /dev/null 2>&1 || true
 sleep 2
 
 echo ""
-echo "--- GET /api/v1/environments (empty) ---"
-LIST=$(checked_curl "$API/api/v1/environments") || { fail "GET /api/v1/environments failed"; LIST="[]"; }
+echo "--- GET /api/v1/workspaces (empty) ---"
+LIST=$(checked_curl "$API/api/v1/workspaces") || { fail "GET /api/v1/workspaces failed"; LIST="[]"; }
 echo "$LIST"
-assert_not_contains "$ENV_NAME" "$LIST" "env list does not contain $ENV_NAME before create"
+assert_not_contains "$WS_NAME" "$LIST" "workspace list does not contain $WS_NAME before create"
 
 echo ""
-echo "--- POST /api/v1/environments (vcluster install may take several minutes) ---"
-CREATED=$(checked_curl -X POST "$API/api/v1/environments" \
+echo "--- POST /api/v1/workspaces (vcluster install may take several minutes) ---"
+CREATED=$(checked_curl -X POST "$API/api/v1/workspaces" \
   -H "Content-Type: application/json" \
-  -d "{\"name\":\"$ENV_NAME\",\"repos\":[\"https://github.com/danielpodwysocki/mahakam\"],\"viewers\":[\"terminal\",\"browser\"]}") || {
-  fail "POST /api/v1/environments failed"
+  -d "{\"name\":\"$WS_NAME\",\"repos\":[\"https://github.com/danielpodwysocki/mahakam\"],\"viewers\":[\"terminal\",\"browser\"]}") || {
+  fail "POST /api/v1/workspaces failed"
   echo "=== Results: $PASS passed, $FAIL failed ===" && exit 1
 }
 echo "$CREATED"
-assert_contains "$ENV_NAME" "$CREATED" "create response contains env name"
+assert_contains "$WS_NAME" "$CREATED" "create response contains workspace name"
 assert_contains "namespace" "$CREATED" "create response contains namespace field"
 assert_contains "status" "$CREATED" "create response contains status field"
 
 echo ""
-echo "--- GET /api/v1/environments (after create) ---"
-LIST=$(checked_curl "$API/api/v1/environments") || { fail "GET after create failed"; LIST="[]"; }
+echo "--- GET /api/v1/workspaces (after create) ---"
+LIST=$(checked_curl "$API/api/v1/workspaces") || { fail "GET after create failed"; LIST="[]"; }
 echo "$LIST"
-assert_contains "$ENV_NAME" "$LIST" "env list contains $ENV_NAME after create"
+assert_contains "$WS_NAME" "$LIST" "workspace list contains $WS_NAME after create"
 
 echo ""
-echo "--- waiting for $ENV_NAME to become ready (up to 15 min) ---"
+echo "--- waiting for $WS_NAME to become ready (up to 15 min) ---"
 READY=0
 for i in $(seq 1 180); do
-  STATUS_VAL=$(curl -s "$API/api/v1/environments" \
+  STATUS_VAL=$(curl -s "$API/api/v1/workspaces" \
     | grep -o '"status":"[^"]*' | head -1 | sed 's/"status":"//')
   if [ "$STATUS_VAL" = "ready" ]; then
     READY=1
@@ -86,9 +86,9 @@ for i in $(seq 1 180); do
   sleep 5
 done
 if [ "$READY" = "1" ]; then
-  pass "$ENV_NAME reached ready status"
+  pass "$WS_NAME reached ready status"
 else
-  fail "$ENV_NAME did not reach ready status (last status: $STATUS_VAL)"
+  fail "$WS_NAME did not reach ready status (last status: $STATUS_VAL)"
 fi
 
 # Poll a URL until it returns 200 with body containing EXPECT, or times out.
@@ -111,29 +111,29 @@ poll_viewer() {
 }
 
 echo ""
-echo "--- GET viewer terminal endpoint for $ENV_NAME ---"
+echo "--- GET viewer terminal endpoint for $WS_NAME ---"
 if [ "$READY" = "1" ]; then
   # Viewers are spawned after ArgoCD becomes Healthy; poll until the pod is up.
-  TERMINAL_URL="http://viewer-${ENV_NAME}-terminal.env-${ENV_NAME}:80/projects/viewers/${ENV_NAME}/terminal/"
+  TERMINAL_URL="http://viewer-${WS_NAME}-terminal.ws-${WS_NAME}:80/projects/viewers/${WS_NAME}/terminal/"
   poll_viewer "terminal viewer" "$TERMINAL_URL" "ttyd" 30 5
 else
-  fail "skipping terminal viewer test — environment not ready"
+  fail "skipping terminal viewer test — workspace not ready"
 fi
 
 echo ""
-echo "--- GET viewer browser endpoint for $ENV_NAME (follows redirect to noVNC) ---"
+echo "--- GET viewer browser endpoint for $WS_NAME (follows redirect to noVNC) ---"
 if [ "$READY" = "1" ]; then
   # Check that the browser viewer index.html contains the "Browser Viewer" title,
   # proving noVNC content is served (not the nginx default welcome page).
-  BROWSER_SVC_URL="http://viewer-${ENV_NAME}-browser.env-${ENV_NAME}:80/projects/viewers/${ENV_NAME}/browser/"
+  BROWSER_SVC_URL="http://viewer-${WS_NAME}-browser.ws-${WS_NAME}:80/projects/viewers/${WS_NAME}/browser/"
   poll_viewer "browser viewer" "$BROWSER_SVC_URL" "Browser Viewer" 30 5
 else
-  fail "skipping browser viewer test — environment not ready"
+  fail "skipping browser viewer test — workspace not ready"
 fi
 
 echo ""
-echo "--- DELETE /api/v1/environments/$ENV_NAME ---"
-HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE "$API/api/v1/environments/$ENV_NAME")
+echo "--- DELETE /api/v1/workspaces/$WS_NAME ---"
+HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE "$API/api/v1/workspaces/$WS_NAME")
 echo "HTTP $HTTP_STATUS"
 if [ "$HTTP_STATUS" = "204" ]; then
   pass "delete returns 204"
@@ -142,20 +142,20 @@ else
 fi
 
 echo ""
-echo "--- waiting for $ENV_NAME to disappear from list (ArgoCD cascade is async) ---"
+echo "--- waiting for $WS_NAME to disappear from list (ArgoCD cascade is async) ---"
 GONE=0
 for i in $(seq 1 60); do
-  LIST=$(curl -s "$API/api/v1/environments")
-  if ! echo "$LIST" | grep -q "\"name\":\"$ENV_NAME\""; then
+  LIST=$(curl -s "$API/api/v1/workspaces")
+  if ! echo "$LIST" | grep -q "\"name\":\"$WS_NAME\""; then
     GONE=1
     break
   fi
   sleep 5
 done
 if [ "$GONE" = "1" ]; then
-  pass "env list does not contain $ENV_NAME after delete"
+  pass "workspace list does not contain $WS_NAME after delete"
 else
-  fail "env list still contains $ENV_NAME after delete (ArgoCD cascade may still be running)"
+  fail "workspace list still contains $WS_NAME after delete (ArgoCD cascade may still be running)"
 fi
 
 echo ""

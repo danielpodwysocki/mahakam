@@ -7,7 +7,7 @@ use kube::{
 use tokio::time::{sleep, timeout, Duration};
 use tracing::{info, warn};
 
-// vcluster chart (0.33.x) creates a secret named "vc-vcluster-{name}" in "env-{name}",
+// vcluster chart (0.33.x) creates a secret named "vc-vcluster-{name}" in "ws-{name}",
 // where "vcluster-{name}" is the Helm release name set by the inner ArgoCD Application.
 // Key "config" holds the kubeconfig YAML with server "https://localhost:8443"; it is
 // patched to the in-cluster service address before use.
@@ -27,10 +27,10 @@ const API_READY_POLL_INTERVAL_SECS: u64 = 3;
 /// directly or via ArgoCD. Times out after 300 seconds.
 pub async fn wait_for_vcluster_kubeconfig(
     client: &Client,
-    env_name: &str,
+    ws_name: &str,
 ) -> anyhow::Result<Vec<u8>> {
-    let namespace = format!("env-{env_name}");
-    let secret_name = format!("{KUBECONFIG_SECRET_PREFIX}{env_name}");
+    let namespace = format!("ws-{ws_name}");
+    let secret_name = format!("{KUBECONFIG_SECRET_PREFIX}{ws_name}");
     let secrets: Api<Secret> = Api::namespaced(client.clone(), &namespace);
 
     info!(secret = %secret_name, namespace = %namespace, "waiting for vcluster kubeconfig secret");
@@ -54,8 +54,7 @@ pub async fn wait_for_vcluster_kubeconfig(
                         .0
                         .clone();
 
-                    let in_cluster_server =
-                        format!("https://vcluster-{env_name}.env-{env_name}:443");
+                    let in_cluster_server = format!("https://vcluster-{ws_name}.ws-{ws_name}:443");
                     let kubeconfig = String::from_utf8(raw)
                         .map_err(|e| anyhow::anyhow!("kubeconfig is not valid UTF-8: {}", e))?
                         .replace(KUBECONFIG_LOCALHOST, &in_cluster_server)
@@ -87,7 +86,7 @@ pub async fn wait_for_vcluster_kubeconfig(
 /// The vcluster pod may be Running (and thus ArgoCD shows Healthy) before its
 /// internal API server has finished starting. This function retries a cheap
 /// `list namespaces` call until it succeeds or the timeout expires.
-pub async fn wait_for_vcluster_api_ready(env_name: &str, kubeconfig: &[u8]) -> anyhow::Result<()> {
+pub async fn wait_for_vcluster_api_ready(ws_name: &str, kubeconfig: &[u8]) -> anyhow::Result<()> {
     let kubeconfig_text = std::str::from_utf8(kubeconfig)
         .map_err(|e| anyhow::anyhow!("kubeconfig is not valid UTF-8: {e}"))?;
     let parsed = Kubeconfig::from_yaml(kubeconfig_text)
@@ -98,7 +97,7 @@ pub async fn wait_for_vcluster_api_ready(env_name: &str, kubeconfig: &[u8]) -> a
     let client = Client::try_from(config)
         .map_err(|e| anyhow::anyhow!("failed to create vcluster client: {e}"))?;
 
-    info!(env = %env_name, "waiting for vcluster API server to accept connections");
+    info!(ws = %ws_name, "waiting for vcluster API server to accept connections");
 
     timeout(Duration::from_secs(API_READY_TIMEOUT_SECS), async {
         loop {
@@ -108,7 +107,7 @@ pub async fn wait_for_vcluster_api_ready(env_name: &str, kubeconfig: &[u8]) -> a
             {
                 Ok(_) => return Ok::<(), anyhow::Error>(()),
                 Err(e) => {
-                    warn!(env = %env_name, error = %e, "vcluster API not ready, retrying");
+                    warn!(ws = %ws_name, error = %e, "vcluster API not ready, retrying");
                     sleep(Duration::from_secs(API_READY_POLL_INTERVAL_SECS)).await;
                 }
             }

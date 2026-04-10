@@ -1,0 +1,5 @@
+apiVersion: v2
+name: workspace
+description: Per-workspace resources for mahakam — namespace and vcluster Application
+type: application
+version: 0.1.0

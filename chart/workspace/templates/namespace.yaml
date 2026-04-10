@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ws-{{ .Values.wsName }}
+  labels:
+    mahakam.io/managed: "true"
+    mahakam.io/ws: {{ .Values.wsName }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"

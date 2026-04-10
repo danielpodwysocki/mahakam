@@ -6,4 +6,4 @@
 //   repositories/<RepositoryName>/mock.rs     — mockall mock for unit tests
 //   repositories/<RepositoryName>/sqlite.rs   — SQLite implementation
 
-pub mod environment;
+pub mod workspace;

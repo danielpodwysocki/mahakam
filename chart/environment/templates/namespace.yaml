@@ -1,9 +1,0 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: env-{{ .Values.envName }}
-  labels:
-    mahakam.io/managed: "true"
-    mahakam.io/env: {{ .Values.envName }}
-  annotations:
-    argocd.argoproj.io/sync-wave: "-1"

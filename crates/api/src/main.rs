@@ -16,10 +16,10 @@ struct Config {
 
     #[arg(
         long,
-        env = "ENVIRONMENTS_BASE_PATH",
-        default_value = "/app/environments/base"
+        env = "WORKSPACES_BASE_PATH",
+        default_value = "/app/workspaces/base"
     )]
-    environments_base_path: PathBuf,
+    workspaces_base_path: PathBuf,
 
     #[arg(long, env = "VIEWER_IMAGE", default_value = "mahakam-ttyd:latest")]
     viewer_image: String,
@@ -30,6 +30,13 @@ struct Config {
         default_value = "mahakam-browser-viewer:latest"
     )]
     browser_viewer_image: String,
+
+    #[arg(
+        long,
+        env = "ANDROID_VIEWER_IMAGE",
+        default_value = "mahakam-android-viewer:latest"
+    )]
+    android_viewer_image: String,
 
     #[arg(
         long,
@@ -59,9 +66,10 @@ async fn main() -> Result<()> {
 
     let state = routes::AppState {
         kube_client: Arc::new(kube_client),
-        base_path: Arc::new(config.environments_base_path),
+        base_path: Arc::new(config.workspaces_base_path),
         viewer_image: Arc::new(config.viewer_image),
         browser_viewer_image: Arc::new(config.browser_viewer_image),
+        android_viewer_image: Arc::new(config.android_viewer_image),
         repo_url: Arc::new(config.repo_url),
         repo_revision: Arc::new(config.repo_revision),
         argocd_namespace: Arc::new(config.argocd_namespace),

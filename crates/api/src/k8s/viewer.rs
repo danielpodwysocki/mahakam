@@ -3,7 +3,8 @@ use std::process::Stdio;
 
 use k8s_openapi::api::apps::v1::{Deployment, DeploymentSpec};
 use k8s_openapi::api::core::v1::{
-    Container, ContainerPort, EnvVar, PodSpec, PodTemplateSpec, Service, ServicePort, ServiceSpec,
+    Container, ContainerPort, EnvVar, HostPathVolumeSource, PodSpec, PodTemplateSpec,
+    SecurityContext, Service, ServicePort, ServiceSpec, Volume, VolumeMount,
 };
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::LabelSelector;
 use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
@@ -16,11 +17,11 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tracing::{info, warn};
 
-use shared::repositories::environment::Viewer;
+use shared::repositories::workspace::Viewer;
 
 const SELECTOR_LABEL: &str = "mahakam.io/viewer-instance";
 const LABEL_VIEWER: &str = "mahakam.io/viewer";
-const LABEL_ENV_NAME: &str = "mahakam.io/env-name";
+const LABEL_WS_NAME: &str = "mahakam.io/ws-name";
 const ANN_VIEWER_DISPLAY_NAME: &str = "mahakam.io/viewer-display-name";
 const ANN_VIEWER_PATH: &str = "mahakam.io/viewer-path";
 const ROUTE_NAMESPACE: &str = "mahakam-system";
@@ -31,7 +32,7 @@ const HTTPROUTE_VERSION: &str = "v1";
 const HTTPROUTE_KIND: &str = "HTTPRoute";
 const HTTPROUTE_PLURAL: &str = "httproutes";
 
-/// All the information needed to spawn one viewer alongside an environment.
+/// All the information needed to spawn one viewer alongside a workspace.
 pub struct ViewerSpec {
     /// Short machine name (e.g. `"terminal"`, `"browser"`). Used in resource names.
     pub name: String,
@@ -39,7 +40,7 @@ pub struct ViewerSpec {
     pub display_name: String,
     /// OCI image reference for the viewer container.
     pub image: String,
-    /// HTTP path prefix the viewer is reachable at (e.g. `"/projects/viewers/my-env/terminal"`).
+    /// HTTP path prefix the viewer is reachable at (e.g. `"/projects/viewers/my-ws/terminal"`).
     pub path_prefix: String,
     /// Port the viewer container listens on.
     pub port: u16,
@@ -49,6 +50,12 @@ pub struct ViewerSpec {
     /// before forwarding to the backend. Use for viewers that serve at `/` (e.g. noVNC).
     /// When false, the full path is forwarded and the viewer must handle its own prefix.
     pub strip_path_prefix: bool,
+    /// When true, sets `securityContext.privileged = true` on the viewer container.
+    /// Required for hardware-accelerated viewers that need `/dev/kvm`.
+    pub privileged: bool,
+    /// Host device paths to expose inside the container (e.g. `["/dev/kvm"]`).
+    /// Each entry becomes a `hostPath` volume + volume mount.
+    pub host_devices: Vec<String>,
 }
 
 fn httproute_api(client: &Client) -> Api<DynamicObject> {
@@ -64,15 +71,15 @@ fn httproute_api(client: &Client) -> Api<DynamicObject> {
 
 /// Spawns a Deployment, Service, ReferenceGrant, and HTTPRoute for one viewer.
 ///
-/// Resources are named `viewer-{env_name}-{spec.name}` and split across two namespaces:
-/// - `env-{env_name}`: Deployment, Service, ReferenceGrant
+/// Resources are named `viewer-{ws_name}-{spec.name}` and split across two namespaces:
+/// - `ws-{ws_name}`: Deployment, Service, ReferenceGrant
 /// - `mahakam-system`: HTTPRoute (cross-namespace backendRef via the ReferenceGrant)
 ///
 /// The Service always exposes port 80, regardless of the container port, so the
 /// gateway proxy does not need to know the internal port.
-pub async fn spawn_viewer(client: &Client, env_name: &str, spec: ViewerSpec) -> anyhow::Result<()> {
-    let ns = format!("env-{env_name}");
-    let name = format!("viewer-{env_name}-{}", spec.name);
+pub async fn spawn_viewer(client: &Client, ws_name: &str, spec: ViewerSpec) -> anyhow::Result<()> {
+    let ns = format!("ws-{ws_name}");
+    let name = format!("viewer-{ws_name}-{}", spec.name);
     let port_i32 = spec.port as i32;
 
     let mut pod_labels = BTreeMap::new();
@@ -87,6 +94,49 @@ pub async fn spawn_viewer(client: &Client, env_name: &str, spec: ViewerSpec) -> 
             ..Default::default()
         })
         .collect();
+
+    // Build hostPath volumes + mounts for any requested host devices.
+    let (pod_volumes, container_mounts) = if spec.host_devices.is_empty() {
+        (None, None)
+    } else {
+        let volumes = spec
+            .host_devices
+            .iter()
+            .map(|path| {
+                let vol_name = path.trim_start_matches('/').replace('/', "-");
+                Volume {
+                    name: vol_name,
+                    host_path: Some(HostPathVolumeSource {
+                        path: path.clone(),
+                        type_: None,
+                    }),
+                    ..Default::default()
+                }
+            })
+            .collect::<Vec<_>>();
+        let mounts = spec
+            .host_devices
+            .iter()
+            .map(|path| {
+                let vol_name = path.trim_start_matches('/').replace('/', "-");
+                VolumeMount {
+                    name: vol_name,
+                    mount_path: path.clone(),
+                    ..Default::default()
+                }
+            })
+            .collect::<Vec<_>>();
+        (Some(volumes), Some(mounts))
+    };
+
+    let security_context = if spec.privileged {
+        Some(SecurityContext {
+            privileged: Some(true),
+            ..Default::default()
+        })
+    } else {
+        None
+    };
 
     // ── Deployment ────────────────────────────────────────────────────────────
     let deployment = Deployment {
@@ -120,8 +170,11 @@ pub async fn spawn_viewer(client: &Client, env_name: &str, spec: ViewerSpec) -> 
                         } else {
                             Some(container_env)
                         },
+                        security_context,
+                        volume_mounts: container_mounts,
                         ..Default::default()
                     }],
+                    volumes: pod_volumes,
                     ..Default::default()
                 }),
             },
@@ -134,7 +187,7 @@ pub async fn spawn_viewer(client: &Client, env_name: &str, spec: ViewerSpec) -> 
         .create(&PostParams::default(), &deployment)
         .await
         .map_err(|e| anyhow::anyhow!("failed to create viewer Deployment {name}: {e}"))?;
-    info!(env = %env_name, viewer = %spec.name, resource = %name, "viewer Deployment created");
+    info!(ws = %ws_name, viewer = %spec.name, resource = %name, "viewer Deployment created");
 
     // ── Service ───────────────────────────────────────────────────────────────
     // Always exposes port 80 externally; maps to the container's actual port.
@@ -160,7 +213,7 @@ pub async fn spawn_viewer(client: &Client, env_name: &str, spec: ViewerSpec) -> 
         .create(&PostParams::default(), &service)
         .await
         .map_err(|e| anyhow::anyhow!("failed to create viewer Service {name}: {e}"))?;
-    info!(env = %env_name, viewer = %spec.name, resource = %name, "viewer Service created");
+    info!(ws = %ws_name, viewer = %spec.name, resource = %name, "viewer Service created");
 
     // ── ReferenceGrant ────────────────────────────────────────────────────────
     kubectl_apply(&serde_json::json!({
@@ -173,10 +226,10 @@ pub async fn spawn_viewer(client: &Client, env_name: &str, spec: ViewerSpec) -> 
         },
     }))
     .await?;
-    info!(env = %env_name, viewer = %spec.name, "viewer ReferenceGrant applied");
+    info!(ws = %ws_name, viewer = %spec.name, "viewer ReferenceGrant applied");
 
     // ── HTTPRoute ─────────────────────────────────────────────────────────────
-    // Labels allow discovery via list_all_env_viewers.
+    // Labels allow discovery via list_all_ws_viewers.
     // Annotations carry display name and path for the frontend.
     let mut rules_entry = serde_json::json!({
         "matches": [{ "path": { "type": "PathPrefix", "value": spec.path_prefix } }],
@@ -202,7 +255,7 @@ pub async fn spawn_viewer(client: &Client, env_name: &str, spec: ViewerSpec) -> 
             "namespace": ROUTE_NAMESPACE,
             "labels": {
                 LABEL_VIEWER: "true",
-                LABEL_ENV_NAME: env_name,
+                LABEL_WS_NAME: ws_name,
             },
             "annotations": {
                 ANN_VIEWER_DISPLAY_NAME: spec.display_name,
@@ -215,16 +268,16 @@ pub async fn spawn_viewer(client: &Client, env_name: &str, spec: ViewerSpec) -> 
         },
     }))
     .await?;
-    info!(env = %env_name, viewer = %spec.name, route = %name, "viewer HTTPRoute applied");
+    info!(ws = %ws_name, viewer = %spec.name, route = %name, "viewer HTTPRoute applied");
 
     Ok(())
 }
 
-/// Lists all viewer HTTPRoutes across all environments, grouped by env name.
+/// Lists all viewer HTTPRoutes across all workspaces, grouped by workspace name.
 ///
-/// A single list call covers all environments; callers merge the result into
-/// each `Environment` returned by `list_env_applications`.
-pub async fn list_all_env_viewers(client: &Client) -> anyhow::Result<HashMap<String, Vec<Viewer>>> {
+/// A single list call covers all workspaces; callers merge the result into
+/// each `Workspace` returned by `list_ws_applications`.
+pub async fn list_all_ws_viewers(client: &Client) -> anyhow::Result<HashMap<String, Vec<Viewer>>> {
     let api = httproute_api(client);
     let lp = ListParams::default().labels(&format!("{LABEL_VIEWER}=true"));
     let routes = api
@@ -243,7 +296,7 @@ pub async fn list_all_env_viewers(client: &Client) -> anyhow::Result<HashMap<Str
             .cloned()
             .unwrap_or_default();
 
-        let Some(env_name) = labels.get(LABEL_ENV_NAME).cloned() else {
+        let Some(ws_name) = labels.get(LABEL_WS_NAME).cloned() else {
             continue;
         };
         let Some(name) = route.metadata.name.as_deref() else {
@@ -258,13 +311,13 @@ pub async fn list_all_env_viewers(client: &Client) -> anyhow::Result<HashMap<Str
             .cloned()
             .unwrap_or_default();
 
-        // Derive the short viewer name: strip "viewer-{env_name}-" prefix from route name.
+        // Derive the short viewer name: strip "viewer-{ws_name}-" prefix from route name.
         let viewer_name = name
-            .strip_prefix(&format!("viewer-{env_name}-"))
+            .strip_prefix(&format!("viewer-{ws_name}-"))
             .unwrap_or(name)
             .to_string();
 
-        map.entry(env_name).or_default().push(Viewer {
+        map.entry(ws_name).or_default().push(Viewer {
             name: viewer_name,
             display_name,
             path,
@@ -274,27 +327,27 @@ pub async fn list_all_env_viewers(client: &Client) -> anyhow::Result<HashMap<Str
     Ok(map)
 }
 
-/// Removes all viewer HTTPRoutes for `env_name` from `mahakam-system`.
+/// Removes all viewer HTTPRoutes for `ws_name` from `mahakam-system`.
 ///
-/// The Deployment, Service, and ReferenceGrant live in `env-{env_name}` and are
+/// The Deployment, Service, and ReferenceGrant live in `ws-{ws_name}` and are
 /// cleaned up automatically when that namespace is deleted during ArgoCD cascade.
-pub async fn teardown_viewer(client: &Client, env_name: &str) -> anyhow::Result<()> {
+pub async fn teardown_viewer(client: &Client, ws_name: &str) -> anyhow::Result<()> {
     let api = httproute_api(client);
     let lp =
-        ListParams::default().labels(&format!("{LABEL_VIEWER}=true,{LABEL_ENV_NAME}={env_name}"));
+        ListParams::default().labels(&format!("{LABEL_VIEWER}=true,{LABEL_WS_NAME}={ws_name}"));
 
     let routes = api
         .list(&lp)
         .await
-        .map_err(|e| anyhow::anyhow!("failed to list viewer HTTPRoutes for {env_name}: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("failed to list viewer HTTPRoutes for {ws_name}: {e}"))?;
 
     for route in routes {
         let route_name = route.metadata.name.as_deref().unwrap_or_default();
         match api.delete(route_name, &DeleteParams::default()).await {
-            Ok(_) => info!(env = %env_name, route = %route_name, "viewer HTTPRoute deleted"),
+            Ok(_) => info!(ws = %ws_name, route = %route_name, "viewer HTTPRoute deleted"),
             Err(kube::Error::Api(ref e)) if e.code == 404 => {}
             Err(e) => {
-                warn!(env = %env_name, route = %route_name, error = %e, "failed to delete viewer HTTPRoute")
+                warn!(ws = %ws_name, route = %route_name, error = %e, "failed to delete viewer HTTPRoute")
             }
         }
     }

@@ -9,7 +9,10 @@ api:
   tag: latest
   imagePullPolicy: IfNotPresent
   databaseUrl: sqlite:///data/mahakam.db
-  environmentsBasePath: /app/environments/base
+  workspacesBasePath: /app/workspaces/base
+  viewerImage: mahakam-ttyd:latest
+  browserViewerImage: mahakam-browser-viewer:latest
+  androidViewerImage: mahakam-android-viewer:latest
 
 web:
   image: mahakam-web

@@ -1,59 +1,47 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { useEnvironments } from '../composables/useEnvironments'
-import EnvironmentForm from '../components/EnvironmentForm.vue'
-import EnvironmentList from '../components/EnvironmentList.vue'
-import type { CreateEnvironment } from '../api/environments'
+import { fetchProjects, type Project } from '../api/projects'
 
-const { environments, pending, error, load, create, remove } = useEnvironments()
-const submitting = ref(false)
-const submitError = ref<string | null>(null)
+const projects = ref<Project[]>([])
+const pending = ref(false)
+const error = ref<Error | null>(null)
 
 onMounted(async () => {
-  await load()
-})
-
-async function handleCreate(data: CreateEnvironment) {
-  submitting.value = true
-  submitError.value = null
+  pending.value = true
   try {
-    await create(data)
-  } catch (e: any) {
-    submitError.value = e?.message ?? 'An unexpected error occurred'
+    projects.value = await fetchProjects()
+  } catch (e) {
+    error.value = e as Error
   } finally {
-    submitting.value = false
+    pending.value = false
   }
-}
-
-async function handleDelete(name: string) {
-  await remove(name)
-}
+})
 </script>
 
 <template>
   <main class="page">
     <header class="site-header">
       <h1 class="site-name">Mahakam</h1>
+      <p class="site-sub">Select a project to manage its workspaces</p>
     </header>
 
     <div v-if="error" class="error-banner">
       {{ error.message }}
     </div>
 
-    <section class="card">
-      <EnvironmentForm :on-submit="handleCreate" :submitting="submitting" />
-      <div v-if="submitError" class="submit-error">
-        <span class="submit-error-label">Error</span>
-        {{ submitError }}
-      </div>
-    </section>
+    <div v-if="pending" class="loading">Loading projects...</div>
 
-    <div class="row-divider" />
-
-    <section class="card">
-      <div v-if="pending" class="loading">Loading...</div>
-      <EnvironmentList v-else :environments="environments" :on-delete="handleDelete" />
-    </section>
+    <div v-else class="project-grid">
+      <NuxtLink
+        v-for="project in projects"
+        :key="project.name"
+        :to="`/projects/${project.name}`"
+        class="project-card"
+      >
+        <span class="project-name">{{ project.name }}</span>
+        <span class="project-count">{{ project.workspace_count }} workspace{{ project.workspace_count === 1 ? '' : 's' }}</span>
+      </NuxtLink>
+    </div>
   </main>
 </template>
 
@@ -79,6 +67,12 @@ async function handleDelete(name: string) {
   letter-spacing: 0.18em;
 }
 
+.site-sub {
+  color: var(--text-dim);
+  font-size: 0.88rem;
+  margin-top: 0.5rem;
+}
+
 .error-banner {
   background: var(--danger-bg);
   border: 1px solid var(--danger);
@@ -89,44 +83,46 @@ async function handleDelete(name: string) {
   font-size: 0.88rem;
 }
 
-.card {
-  background: var(--surface);
-  border: 1px solid var(--border-dim);
-  padding: 1.75rem 2rem;
-  margin-bottom: 0.5rem;
-  box-shadow: 0 2px 16px rgba(0, 0, 0, 0.35);
-}
-
-.row-divider {
-  height: 1px;
-  background: linear-gradient(to right, transparent, var(--border-dim), transparent);
-  margin: 1.25rem 0;
-}
-
 .loading {
   text-align: center;
   color: var(--text-dim);
-  padding: 2rem 0;
+  padding: 3rem 0;
   font-size: 0.9rem;
 }
 
-.submit-error {
-  margin-top: 1rem;
-  padding: 0.65rem 1rem;
-  background: var(--danger-bg);
-  border: 1px solid var(--danger);
-  border-left: 3px solid var(--danger);
-  color: #dd8888;
-  font-size: 0.85rem;
-  display: flex;
-  gap: 0.5rem;
-  align-items: baseline;
+.project-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 1rem;
 }
 
-.submit-error-label {
-  font-size: 0.72rem;
+.project-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 1.5rem 1.75rem;
+  background: var(--surface);
+  border: 1px solid var(--border-dim);
+  text-decoration: none;
+  transition: all 0.15s;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.28);
+}
+
+.project-card:hover {
+  border-color: var(--accent);
+  background: rgba(62, 44, 30, 0.6);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+}
+
+.project-name {
+  font-size: 1.1rem;
   font-weight: 600;
-  color: var(--danger);
-  flex-shrink: 0;
+  color: var(--heading);
+  letter-spacing: 0.04em;
+}
+
+.project-count {
+  font-size: 0.78rem;
+  color: var(--text-dim);
 }
 </style>

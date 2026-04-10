@@ -1,4 +1,4 @@
-use shared::repositories::environment::Environment;
+use shared::repositories::workspace::Workspace;
 
 use kube::{
     api::{Api, DeleteParams, DynamicObject, ListParams, Patch, PatchParams, PostParams},
@@ -18,27 +18,30 @@ const HEALTH_WAIT_TIMEOUT_SECS: u64 = 600;
 const POLL_INTERVAL_SECS: u64 = 5;
 
 const LABEL_MANAGED: &str = "mahakam.io/managed";
-const ANN_ID: &str = "mahakam.io/env-id";
-const ANN_REPOS: &str = "mahakam.io/env-repos";
-const ANN_CREATED_AT: &str = "mahakam.io/env-created-at";
-const ANN_STATUS: &str = "mahakam.io/env-status";
+const ANN_ID: &str = "mahakam.io/ws-id";
+const ANN_REPOS: &str = "mahakam.io/ws-repos";
+const ANN_CREATED_AT: &str = "mahakam.io/ws-created-at";
+const ANN_STATUS: &str = "mahakam.io/ws-status";
+const ANN_PROJECT: &str = "mahakam.io/ws-project";
 
-/// Parameters for the outer ArgoCD Application created per environment.
-pub struct EnvApplicationSpec<'a> {
-    pub env_name: &'a str,
-    pub env_id: &'a str,
-    pub env_repos: &'a [String],
-    pub env_created_at: &'a str,
-    /// Git repository URL containing `chart/environment/`.
+/// Parameters for the outer ArgoCD Application created per workspace.
+pub struct WsApplicationSpec<'a> {
+    pub ws_name: &'a str,
+    pub ws_id: &'a str,
+    pub ws_repos: &'a [String],
+    pub ws_created_at: &'a str,
+    /// Git repository URL containing `chart/workspace/`.
     pub repo_url: &'a str,
     /// Git revision (branch, tag, or SHA). "HEAD" tracks the default branch.
     pub repo_revision: &'a str,
     /// Namespace where ArgoCD is installed.
     pub argocd_namespace: &'a str,
-    /// ArgoCD AppProject for all environment Applications.
+    /// ArgoCD AppProject for all workspace Applications.
     pub argocd_project: &'a str,
     /// vcluster Helm chart version to pin in the inner Application.
     pub vcluster_chart_version: &'a str,
+    /// Project this workspace belongs to (e.g. `"default"`).
+    pub ws_project: &'a str,
 }
 
 fn application_api(client: &Client, namespace: &str) -> Api<DynamicObject> {
@@ -52,30 +55,30 @@ fn application_api(client: &Client, namespace: &str) -> Api<DynamicObject> {
     Api::namespaced_with(client.clone(), namespace, &ar)
 }
 
-/// Creates the outer ArgoCD Application for `env_name`.
+/// Creates the outer ArgoCD Application for `ws_name`.
 ///
-/// The Application sources `chart/environment` from the mahakam git repository.
+/// The Application sources `chart/workspace` from the mahakam git repository.
 /// When ArgoCD syncs it, two resources are created in order via sync waves:
-/// - wave -1: `Namespace env-{name}` (labeled for mahakam management)
+/// - wave -1: `Namespace ws-{name}` (labeled for mahakam management)
 /// - wave  0: `Application vcluster-{name}` (installs the vcluster Helm chart)
 ///
 /// Both child resources carry `resources-finalizer.argocd.argoproj.io` so cascade
 /// deletion unwinds everything in reverse-wave order when the outer App is deleted.
-pub async fn create_env_application(
+pub async fn create_ws_application(
     client: &Client,
-    spec: &EnvApplicationSpec<'_>,
+    spec: &WsApplicationSpec<'_>,
 ) -> anyhow::Result<()> {
-    let app_name = format!("env-{}", spec.env_name);
+    let app_name = format!("ws-{}", spec.ws_name);
 
     let helm_values = serde_yaml::to_string(&serde_json::json!({
-        "envName": spec.env_name,
+        "wsName": spec.ws_name,
         "argocdNamespace": spec.argocd_namespace,
         "argocdProject": spec.argocd_project,
         "vclusterChartVersion": spec.vcluster_chart_version,
     }))
     .map_err(|e| anyhow::anyhow!("failed to serialize helm values: {e}"))?;
 
-    let repos_json = serde_json::to_string(spec.env_repos)
+    let repos_json = serde_json::to_string(spec.ws_repos)
         .map_err(|e| anyhow::anyhow!("failed to serialize repos: {e}"))?;
 
     let app_json = serde_json::json!({
@@ -86,10 +89,11 @@ pub async fn create_env_application(
             "namespace": spec.argocd_namespace,
             "labels": { LABEL_MANAGED: "true" },
             "annotations": {
-                ANN_ID: spec.env_id,
+                ANN_ID: spec.ws_id,
                 ANN_REPOS: repos_json,
-                ANN_CREATED_AT: spec.env_created_at,
+                ANN_CREATED_AT: spec.ws_created_at,
                 ANN_STATUS: "pending",
+                ANN_PROJECT: spec.ws_project,
             },
             "finalizers": [CASCADE_FINALIZER],
         },
@@ -97,7 +101,7 @@ pub async fn create_env_application(
             "project": spec.argocd_project,
             "source": {
                 "repoURL": spec.repo_url,
-                "path": "chart/environment",
+                "path": "chart/workspace",
                 "targetRevision": spec.repo_revision,
                 "helm": {
                     "values": helm_values,
@@ -124,42 +128,42 @@ pub async fn create_env_application(
         .await
         .map_err(|e| anyhow::anyhow!("failed to create Application {app_name}: {e}"))?;
 
-    info!(env = %spec.env_name, app = %app_name, "ArgoCD Application created");
+    info!(ws = %spec.ws_name, app = %app_name, "ArgoCD Application created");
     Ok(())
 }
 
 /// Polls the outer Application and then the inner vcluster Application until
 /// both are `Healthy` and `Synced`.
 ///
-/// The outer App (`env-{name}`) becomes Healthy quickly once it has created the
+/// The outer App (`ws-{name}`) becomes Healthy quickly once it has created the
 /// namespace and the inner Application object, but the inner App
 /// (`vcluster-{name}`) only reaches Healthy after the vcluster Helm chart has
 /// fully installed. Waiting for both prevents connecting to the vcluster API
 /// server before it is ready.
-pub async fn wait_for_env_healthy(
+pub async fn wait_for_ws_healthy(
     client: &Client,
-    env_name: &str,
+    ws_name: &str,
     argocd_namespace: &str,
 ) -> anyhow::Result<()> {
-    let outer = format!("env-{env_name}");
-    let inner = format!("vcluster-{env_name}");
+    let outer = format!("ws-{ws_name}");
+    let inner = format!("vcluster-{ws_name}");
     // Outer app manages namespace + inner Application object; must be Healthy+Synced.
-    wait_for_application_healthy(client, &outer, env_name, argocd_namespace, true).await?;
+    wait_for_application_healthy(client, &outer, ws_name, argocd_namespace, true).await?;
     // vcluster mutates its own resources post-install, so ArgoCD perpetually shows
     // OutOfSync for the inner app. We only need it to be Healthy (pod running).
-    wait_for_application_healthy(client, &inner, env_name, argocd_namespace, false).await
+    wait_for_application_healthy(client, &inner, ws_name, argocd_namespace, false).await
 }
 
 async fn wait_for_application_healthy(
     client: &Client,
     app_name: &str,
-    env_name: &str,
+    ws_name: &str,
     argocd_namespace: &str,
     require_synced: bool,
 ) -> anyhow::Result<()> {
     let api = application_api(client, argocd_namespace);
 
-    info!(env = %env_name, app = %app_name, require_synced, "waiting for ArgoCD Application to be Healthy");
+    info!(ws = %ws_name, app = %app_name, require_synced, "waiting for ArgoCD Application to be Healthy");
 
     timeout(Duration::from_secs(HEALTH_WAIT_TIMEOUT_SECS), async {
         loop {
@@ -176,7 +180,7 @@ async fn wait_for_application_healthy(
                         .and_then(|v| v.as_str())
                         .unwrap_or("Unknown");
 
-                    info!(env = %env_name, app = %app_name, health, sync, "ArgoCD Application status");
+                    info!(ws = %ws_name, app = %app_name, health, sync, "ArgoCD Application status");
 
                     let synced_ok = !require_synced || sync == "Synced";
                     if health == "Healthy" && synced_ok {
@@ -193,7 +197,7 @@ async fn wait_for_application_healthy(
                     }
                 }
                 Err(kube::Error::Api(ref e)) if e.code == 404 => {
-                    warn!(env = %env_name, app = %app_name, "Application not yet found, retrying");
+                    warn!(ws = %ws_name, app = %app_name, "Application not yet found, retrying");
                 }
                 Err(e) => return Err(anyhow::anyhow!(e)),
             }
@@ -218,18 +222,18 @@ async fn wait_for_application_healthy(
 ///
 /// The caller does not need to wait for cascade completion; ArgoCD will finish
 /// in the background. Treating a 404 as success means calling this twice is safe.
-pub async fn delete_env_application(
+pub async fn delete_ws_application(
     client: &Client,
-    env_name: &str,
+    ws_name: &str,
     argocd_namespace: &str,
 ) -> anyhow::Result<()> {
-    let app_name = format!("env-{env_name}");
+    let app_name = format!("ws-{ws_name}");
     let api = application_api(client, argocd_namespace);
 
     match api.delete(&app_name, &DeleteParams::default()).await {
-        Ok(_) => info!(env = %env_name, app = %app_name, "ArgoCD Application deletion requested"),
+        Ok(_) => info!(ws = %ws_name, app = %app_name, "ArgoCD Application deletion requested"),
         Err(kube::Error::Api(ref e)) if e.code == 404 => {
-            info!(env = %env_name, app = %app_name, "Application not found, nothing to delete");
+            info!(ws = %ws_name, app = %app_name, "Application not found, nothing to delete");
         }
         Err(e) => {
             return Err(anyhow::anyhow!(
@@ -241,15 +245,15 @@ pub async fn delete_env_application(
     Ok(())
 }
 
-/// Lists all mahakam-managed environments by reading ArgoCD Application annotations.
+/// Lists all mahakam-managed workspaces by reading ArgoCD Application annotations.
 ///
 /// Applications are identified by the label `mahakam.io/managed=true`. This survives
 /// API pod restarts because the data lives in the ArgoCD Application objects, not
 /// in any local ephemeral store.
-pub async fn list_env_applications(
+pub async fn list_ws_applications(
     client: &Client,
     argocd_namespace: &str,
-) -> anyhow::Result<Vec<Environment>> {
+) -> anyhow::Result<Vec<Workspace>> {
     let api = application_api(client, argocd_namespace);
     let lp = ListParams::default().labels(&format!("{LABEL_MANAGED}=true"));
     let apps = api
@@ -257,7 +261,7 @@ pub async fn list_env_applications(
         .await
         .map_err(|e| anyhow::anyhow!("failed to list ArgoCD Applications: {e}"))?;
 
-    let mut envs = Vec::new();
+    let mut workspaces = Vec::new();
     for app in apps {
         let annotations = app
             .metadata
@@ -269,7 +273,7 @@ pub async fn list_env_applications(
         let Some(name_raw) = app.metadata.name.as_deref() else {
             continue;
         };
-        let name = name_raw.trim_start_matches("env-").to_string();
+        let name = name_raw.trim_start_matches("ws-").to_string();
 
         let id = annotations
             .get(ANN_ID)
@@ -284,6 +288,10 @@ pub async fn list_env_applications(
             .get(ANN_STATUS)
             .map(|s| s.as_str())
             .unwrap_or("pending");
+        let project = annotations
+            .get(ANN_PROJECT)
+            .cloned()
+            .unwrap_or_else(|| "default".to_string());
         let health = app
             .data
             .pointer("/status/health/status")
@@ -299,28 +307,29 @@ pub async fn list_env_applications(
             "pending".to_string()
         };
 
-        envs.push(Environment {
+        workspaces.push(Workspace {
             id,
-            namespace: format!("env-{name}"),
+            namespace: format!("ws-{name}"),
             name,
             repos,
             created_at,
             status,
             viewers: vec![],
+            project,
         });
     }
 
-    Ok(envs)
+    Ok(workspaces)
 }
 
-/// Patches the `mahakam.io/env-status` annotation on the Application for `env_name`.
-pub async fn update_env_application_status(
+/// Patches the `mahakam.io/ws-status` annotation on the Application for `ws_name`.
+pub async fn update_ws_application_status(
     client: &Client,
-    env_name: &str,
+    ws_name: &str,
     argocd_namespace: &str,
     status: &str,
 ) -> anyhow::Result<()> {
-    let app_name = format!("env-{env_name}");
+    let app_name = format!("ws-{ws_name}");
     let api = application_api(client, argocd_namespace);
 
     let patch = serde_json::json!({
@@ -330,6 +339,6 @@ pub async fn update_env_application_status(
         .await
         .map_err(|e| anyhow::anyhow!("failed to update status annotation on {app_name}: {e}"))?;
 
-    info!(env = %env_name, status, "ArgoCD Application status annotation updated");
+    info!(ws = %ws_name, status, "ArgoCD Application status annotation updated");
     Ok(())
 }

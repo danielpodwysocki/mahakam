@@ -24,10 +24,14 @@ spec:
           env:
             - name: DATABASE_URL
               value: sqlite:///data/mahakam.db
-            - name: ENVIRONMENTS_BASE_PATH
-              value: /app/environments/base
+            - name: WORKSPACES_BASE_PATH
+              value: /app/workspaces/base
             - name: VIEWER_IMAGE
               value: mahakam-ttyd:latest
+            - name: BROWSER_VIEWER_IMAGE
+              value: mahakam-browser-viewer:latest
+            - name: ANDROID_VIEWER_IMAGE
+              value: mahakam-android-viewer:latest
             - name: REPO_URL
               value: https://github.com/danielpodwysocki/mahakam.git
             - name: REPO_REVISION

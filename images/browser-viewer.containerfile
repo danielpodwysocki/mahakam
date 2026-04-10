@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # Browser viewer: Chromium + Xvfb + x11vnc + noVNC behind nginx.
 #
-# ENV_NAME is injected at runtime. The entrypoint:
+# WS_NAME is injected at runtime. The entrypoint:
 #   1. Generates /usr/share/novnc/index.html — a tiny JS page that redirects
 #      the browser to vnc.html with the correct ?path= so noVNC knows its
 #      WebSocket endpoint. curl / e2e tests see HTTP 200 from nginx directly.
@@ -23,13 +23,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -f /etc/nginx/sites-enabled/default
 
 # nginx config template.
-# Only ${ENV_NAME} is substituted at startup; $http_upgrade is left as-is.
+# Only ${WS_NAME} is substituted at startup; $http_upgrade is left as-is.
 COPY <<'NGINX_TMPL' /etc/nginx/novnc.conf.template
 server {
     listen 6080;
 
     # WebSocket proxy — must be matched before the general static block.
-    location ^~ /projects/viewers/${ENV_NAME}/browser/websockify {
+    location ^~ /projects/viewers/${WS_NAME}/browser/websockify {
         proxy_pass         http://127.0.0.1:5901/;
         proxy_http_version 1.1;
         proxy_set_header   Upgrade    $http_upgrade;
@@ -43,7 +43,7 @@ server {
     # The index subrequest stays within this location, so index.html is
     # served correctly. The generated index.html (written at startup) tells
     # noVNC where its WebSocket path lives.
-    location ^~ /projects/viewers/${ENV_NAME}/browser/ {
+    location ^~ /projects/viewers/${WS_NAME}/browser/ {
         alias /usr/share/novnc/;
         index index.html;
     }
@@ -54,7 +54,7 @@ COPY <<'ENTRY' /entrypoint.sh
 #!/bin/sh
 set -e
 
-PREFIX="projects/viewers/${ENV_NAME}/browser"
+PREFIX="projects/viewers/${WS_NAME}/browser"
 
 # Generate a thin index page that redirects the browser to vnc.html with the
 # correct WebSocket path. This avoids HTTP redirect loops and lets curl / e2e
@@ -64,7 +64,7 @@ cat > /usr/share/novnc/index.html <<HTML
 <html>
 <head>
 <meta charset="utf-8">
-<title>Browser Viewer — ${ENV_NAME}</title>
+<title>Browser Viewer — ${WS_NAME}</title>
 <script>
 window.location = '/${PREFIX}/vnc.html?path=${PREFIX}/websockify&autoconnect=1';
 </script>
@@ -73,8 +73,8 @@ window.location = '/${PREFIX}/vnc.html?path=${PREFIX}/websockify&autoconnect=1';
 </html>
 HTML
 
-# Template the nginx config with the current ENV_NAME.
-envsubst '${ENV_NAME}' \
+# Template the nginx config with the current WS_NAME.
+envsubst '${WS_NAME}' \
     < /etc/nginx/novnc.conf.template \
     > /etc/nginx/conf.d/novnc.conf
 
@@ -105,7 +105,7 @@ ENTRY
 
 RUN chmod +x /entrypoint.sh
 
-ENV ENV_NAME=default
+ENV WS_NAME=default
 ENV BROWSER_URL=about:blank
 ENV SCREEN_RESOLUTION=1280x800x24
 

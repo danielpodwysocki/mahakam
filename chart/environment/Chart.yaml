@@ -1,5 +1,0 @@
-apiVersion: v2
-name: environment
-description: Per-environment resources for mahakam — namespace and vcluster Application
-type: application
-version: 0.1.0

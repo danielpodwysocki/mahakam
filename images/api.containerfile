@@ -46,8 +46,8 @@ RUN curl -LO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubec
 RUN curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 
 COPY --from=build /api /api
-COPY environments/ /app/environments/
+COPY workspaces/ /app/workspaces/
 
 EXPOSE 3000
-ENV ENVIRONMENTS_BASE_PATH=/app/environments/base
+ENV WORKSPACES_BASE_PATH=/app/workspaces/base
 CMD ["/api"]
