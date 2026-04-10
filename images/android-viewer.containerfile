@@ -102,7 +102,7 @@ cat > /usr/share/novnc/index.html <<HTML
 <meta charset="utf-8">
 <title>Android Viewer — ${WS_NAME}</title>
 <script>
-window.location = '/${PREFIX}/vnc.html?path=${PREFIX}/websockify&autoconnect=1';
+window.location = '/${PREFIX}/vnc.html?path=${PREFIX}/websockify&autoconnect=1&resize=scale';
 </script>
 </head>
 <body>Loading viewer&hellip;</body>

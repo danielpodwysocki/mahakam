@@ -12,6 +12,7 @@ const metrics = ref<WsMetrics | null>(null)
 const wsError = ref<string | null>(null)
 const metricsError = ref<string | null>(null)
 const activeTab = ref<'dashboard' | string>('dashboard')
+const iframeRef = ref<HTMLIFrameElement | null>(null)
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
@@ -54,6 +55,34 @@ const activeViewer = computed(() =>
   workspace.value?.viewers.find((v) => v.name === activeTab.value) ?? null,
 )
 
+function switchViewer(name: string) {
+  // Suppress noVNC's beforeunload dialog before the iframe navigates away.
+  // A capturing listener runs before noVNC's (non-capture) handler; we
+  // neutralise preventDefault and make returnValue a no-op so the browser
+  // never sees a cancellation request.
+  const frame = iframeRef.value
+  if (frame?.contentWindow) {
+    try {
+      frame.contentWindow.addEventListener(
+        'beforeunload',
+        (e: BeforeUnloadEvent) => {
+          e.preventDefault = () => {}
+          Object.defineProperty(e, 'returnValue', { get: () => undefined, set: () => {}, configurable: true })
+        },
+        { capture: true },
+      )
+    } catch {
+      // cross-origin frame — can't suppress, but this shouldn't happen
+    }
+  }
+  activeTab.value = name
+}
+
+async function handleRestart(e: MouseEvent, viewerName: string, displayName: string) {
+  if (!e.shiftKey && !confirm(`Restart ${displayName}?`)) return
+  await $fetch(`/api/workspaces/${wsName}/viewers/${viewerName}/restart`, { method: 'POST' })
+}
+
 function formatCpu(mc: number): string {
   if (mc === 0) return '—'
   return mc >= 1000 ? `${(mc / 1000).toFixed(1)}` : `${mc}m`
@@ -78,19 +107,27 @@ function formatMemory(mi: number): string {
         <li>
           <button
             :class="['nav-item', { active: activeTab === 'dashboard' }]"
-            @click="activeTab = 'dashboard'"
+            @click="switchViewer('dashboard')"
           >
             Dashboard
           </button>
         </li>
         <li v-if="workspace?.viewers.length" class="nav-section-label">Viewers</li>
-        <li v-for="viewer in workspace?.viewers ?? []" :key="viewer.name">
+        <li v-for="viewer in workspace?.viewers ?? []" :key="viewer.name" class="nav-item-row">
           <button
             :class="['nav-item', { active: activeTab === viewer.name }]"
             :disabled="workspace?.status !== 'ready'"
-            @click="activeTab = viewer.name"
+            @click="switchViewer(viewer.name)"
           >
             {{ viewer.display_name }}
+          </button>
+          <button
+            class="restart-btn"
+            :disabled="workspace?.status !== 'ready'"
+            :title="`Restart ${viewer.display_name} (shift-click to skip confirm)`"
+            @click="handleRestart($event, viewer.name, viewer.display_name)"
+          >
+            ↺
           </button>
         </li>
       </ul>
@@ -101,6 +138,7 @@ function formatMemory(mi: number): string {
       <!-- Viewer iframe -->
       <iframe
         v-if="activeTab !== 'dashboard' && activeViewer"
+        ref="iframeRef"
         :src="`${activeViewer.path}/`"
         class="viewer-frame"
         frameborder="0"
@@ -108,7 +146,8 @@ function formatMemory(mi: number): string {
       />
 
       <!-- Dashboard -->
-      <div v-else class="dashboard">
+      <div v-else class="dashboard-scroll">
+      <div class="dashboard">
         <div v-if="wsError" class="error-banner">{{ wsError }}</div>
 
         <h1 class="dash-title">{{ wsName }}</h1>
@@ -160,6 +199,7 @@ function formatMemory(mi: number): string {
           <h2 class="section-title">Namespace</h2>
           <code class="ns-badge">{{ workspace?.namespace ?? '...' }}</code>
         </div>
+      </div>
       </div>
     </main>
   </div>
@@ -255,12 +295,47 @@ function formatMemory(mi: number): string {
   cursor: not-allowed;
 }
 
+.nav-item-row {
+  display: flex;
+  align-items: center;
+}
+
+.nav-item-row .nav-item {
+  flex: 1;
+}
+
+.restart-btn {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 0.95rem;
+  padding: 0.35rem 0.5rem;
+  cursor: pointer;
+  transition: color 0.12s;
+  line-height: 1;
+}
+
+.restart-btn:hover:not(:disabled) {
+  color: var(--accent);
+}
+
+.restart-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
 /* ── Main content ─────────────────────────────────────────── */
 
 .content {
   flex: 1;
-  overflow: auto;
+  overflow: hidden;
   background: var(--bg);
+}
+
+.dashboard-scroll {
+  height: 100%;
+  overflow-y: auto;
 }
 
 .viewer-frame {

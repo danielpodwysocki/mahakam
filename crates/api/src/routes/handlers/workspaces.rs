@@ -224,6 +224,20 @@ pub async fn get_workspace_metrics(
     }
 }
 
+/// POST /api/v1/workspaces/:name/viewers/:viewer/restart — deletes the viewer pod so the Deployment recreates it.
+pub async fn restart_viewer(
+    State(state): State<AppState>,
+    Path((name, viewer)): Path<(String, String)>,
+) -> impl IntoResponse {
+    match crate::k8s::viewer::restart_viewer(&state.kube_client, &name, &viewer).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => {
+            error!("Failed to restart viewer {} for {}: {}", viewer, name, e);
+            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
+        }
+    }
+}
+
 /// DELETE /api/v1/workspaces/:name
 pub async fn delete_workspace(
     State(state): State<AppState>,

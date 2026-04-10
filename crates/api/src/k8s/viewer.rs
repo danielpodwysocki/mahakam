@@ -3,7 +3,7 @@ use std::process::Stdio;
 
 use k8s_openapi::api::apps::v1::{Deployment, DeploymentSpec};
 use k8s_openapi::api::core::v1::{
-    Container, ContainerPort, EnvVar, HostPathVolumeSource, PodSpec, PodTemplateSpec,
+    Container, ContainerPort, EnvVar, HostPathVolumeSource, Pod, PodSpec, PodTemplateSpec,
     SecurityContext, Service, ServicePort, ServiceSpec, Volume, VolumeMount,
 };
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::LabelSelector;
@@ -325,6 +325,36 @@ pub async fn list_all_ws_viewers(client: &Client) -> anyhow::Result<HashMap<Stri
     }
 
     Ok(map)
+}
+
+/// Deletes the running pod(s) for one viewer so the Deployment recreates them.
+///
+/// Uses the `mahakam.io/viewer-instance` pod label set at spawn time.
+/// 404s are ignored (pod may already be gone or not yet scheduled).
+pub async fn restart_viewer(
+    client: &Client,
+    ws_name: &str,
+    viewer_name: &str,
+) -> anyhow::Result<()> {
+    let ns = format!("ws-{ws_name}");
+    let instance_label_value = format!("viewer-{ws_name}-{viewer_name}");
+    let api = Api::<Pod>::namespaced(client.clone(), &ns);
+    let lp = ListParams::default().labels(&format!("{SELECTOR_LABEL}={instance_label_value}"));
+    let pods = api
+        .list(&lp)
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to list viewer pods for {viewer_name}: {e}"))?;
+    for pod in pods {
+        let pod_name = pod.metadata.name.as_deref().unwrap_or_default();
+        match api.delete(pod_name, &DeleteParams::default()).await {
+            Ok(_) => {
+                info!(ws = %ws_name, viewer = %viewer_name, pod = %pod_name, "viewer pod deleted for restart")
+            }
+            Err(kube::Error::Api(ref e)) if e.code == 404 => {}
+            Err(e) => anyhow::bail!("failed to delete viewer pod {pod_name}: {e}"),
+        }
+    }
+    Ok(())
 }
 
 /// Removes all viewer HTTPRoutes for `ws_name` from `mahakam-system`.

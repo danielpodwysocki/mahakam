@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Mahakam Helm Chart Values",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "argo-cd": {
+      "type": "object",
+      "description": "ArgoCD subchart values (see https://artifacthub.io/packages/helm/argo/argo-cd)",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Deploy ArgoCD as part of this chart"
+        }
+      }
+    },
+    "api": {
+      "type": "object",
+      "description": "Mahakam API deployment configuration",
+      "additionalProperties": false,
+      "required": ["image", "tag"],
+      "properties": {
+        "image": {
+          "type": "string",
+          "description": "Container image name",
+          "minLength": 1
+        },
+        "tag": {
+          "type": "string",
+          "description": "Container image tag",
+          "minLength": 1
+        },
+        "imagePullPolicy": {
+          "type": "string",
+          "description": "Kubernetes image pull policy",
+          "enum": ["Always", "IfNotPresent", "Never"]
+        },
+        "databaseUrl": {
+          "type": "string",
+          "description": "SQLite connection URL (e.g. sqlite:///data/mahakam.db)",
+          "minLength": 1
+        },
+        "environmentsBasePath": {
+          "type": "string",
+          "description": "Path to the kustomize base directory inside the container",
+          "minLength": 1
+        }
+      }
+    },
+    "web": {
+      "type": "object",
+      "description": "Mahakam web UI deployment configuration",
+      "additionalProperties": false,
+      "required": ["image", "tag"],
+      "properties": {
+        "image": {
+          "type": "string",
+          "description": "Container image name",
+          "minLength": 1
+        },
+        "tag": {
+          "type": "string",
+          "description": "Container image tag",
+          "minLength": 1
+        },
+        "imagePullPolicy": {
+          "type": "string",
+          "description": "Kubernetes image pull policy",
+          "enum": ["Always", "IfNotPresent", "Never"]
+        }
+      }
+    }
+  }
+}

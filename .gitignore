@@ -6,6 +6,7 @@
 *.db-shm
 *.db-wal
 
+kube/secrets.env
 # Environment files
 .env
 .env.local

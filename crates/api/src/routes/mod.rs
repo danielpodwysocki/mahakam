@@ -42,6 +42,10 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/workspaces/{name}/metrics",
             get(handlers::workspaces::get_workspace_metrics),
         )
+        .route(
+            "/api/v1/workspaces/{name}/viewers/{viewer}/restart",
+            axum::routing::post(handlers::workspaces::restart_viewer),
+        )
         .route("/api/v1/projects", get(handlers::projects::list_projects))
         .route(
             "/api/v1/projects/{name}/workspaces",
