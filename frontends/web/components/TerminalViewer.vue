@@ -1,5 +1,5 @@
 <script setup lang="ts">
-defineProps<{ envName: string }>()
+defineProps<{ title: string; src: string }>()
 const emit = defineEmits<{ close: [] }>()
 </script>
 
@@ -9,14 +9,14 @@ const emit = defineEmits<{ close: [] }>()
       <header class="console-header">
         <div class="console-title">
           <span class="console-icon">▶_</span>
-          <span>{{ envName }}</span>
+          <span>{{ title }}</span>
         </div>
         <button class="console-close" @click="emit('close')">✕ Dismiss</button>
       </header>
       <iframe
         class="console-frame"
-        :src="`/projects/viewers/${envName}/`"
-        :title="`console session: ${envName}`"
+        :src="src"
+        :title="title"
         allowfullscreen
       />
     </div>

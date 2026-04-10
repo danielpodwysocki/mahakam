@@ -10,8 +10,10 @@ pub mod handlers;
 pub struct AppState {
     pub kube_client: Arc<kube::Client>,
     pub base_path: Arc<PathBuf>,
-    /// OCI image reference for the viewer (ttyd) container spawned per environment.
+    /// OCI image reference for the terminal viewer (ttyd) container.
     pub viewer_image: Arc<String>,
+    /// OCI image reference for the browser viewer (noVNC) container.
+    pub browser_viewer_image: Arc<String>,
     /// Git repository URL containing `chart/environment/` (pulled by ArgoCD).
     pub repo_url: Arc<String>,
     /// Git revision ArgoCD tracks for the environment chart.

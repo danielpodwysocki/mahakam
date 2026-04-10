@@ -4,6 +4,14 @@ pub mod mock;
 pub mod models;
 pub mod sqlite;
 
+/// A viewer endpoint (e.g. terminal, browser) attached to an environment.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Viewer {
+    pub name: String,
+    pub display_name: String,
+    pub path: String,
+}
+
 /// A managed environment with an associated vcluster.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Environment {
@@ -13,6 +21,8 @@ pub struct Environment {
     pub namespace: String,
     pub status: String,
     pub created_at: String,
+    /// Viewer endpoints discovered from HTTPRoute labels at list time.
+    pub viewers: Vec<Viewer>,
 }
 
 /// Repository trait for environment persistence.

@@ -9,7 +9,25 @@ const props = defineProps<{
 
 const name = ref('')
 const repos = ref<string[]>([''])
+const selectedViewers = ref<string[]>(['terminal'])
 const errors = reactive<{ name?: string; repos?: string }>({})
+
+const AVAILABLE_VIEWERS = [
+  { name: 'terminal', label: 'Terminal' },
+  { name: 'browser', label: 'Browser' },
+]
+
+function isViewerSelected(viewerName: string): boolean {
+  return selectedViewers.value.includes(viewerName)
+}
+
+function toggleViewer(viewerName: string, checked: boolean) {
+  if (checked) {
+    selectedViewers.value = [...selectedViewers.value, viewerName]
+  } else {
+    selectedViewers.value = selectedViewers.value.filter((v) => v !== viewerName)
+  }
+}
 
 function addRepo() {
   repos.value = [...repos.value, '']
@@ -29,6 +47,7 @@ function handleSubmit() {
   const data = {
     name: name.value,
     repos: repos.value.filter((r) => r.trim() !== ''),
+    viewers: selectedViewers.value,
   }
   const result = CreateEnvironmentSchema.safeParse(data)
   if (!result.success) {
@@ -79,6 +98,25 @@ function handleSubmit() {
         >Remove</button>
       </div>
       <span v-if="errors.repos" class="error">{{ errors.repos }}</span>
+    </div>
+
+    <div class="field">
+      <label class="label">Viewers</label>
+      <div class="viewer-options">
+        <label
+          v-for="viewer in AVAILABLE_VIEWERS"
+          :key="viewer.name"
+          class="viewer-option"
+        >
+          <input
+            type="checkbox"
+            :value="viewer.name"
+            :checked="isViewerSelected(viewer.name)"
+            @change="toggleViewer(viewer.name, ($event.target as HTMLInputElement).checked)"
+          />
+          <span>{{ viewer.label }}</span>
+        </label>
+      </div>
     </div>
 
     <div class="form-footer">
@@ -144,6 +182,28 @@ function handleSubmit() {
 
 .repo-row .input {
   flex: 1;
+}
+
+.viewer-options {
+  display: flex;
+  gap: 1.2rem;
+}
+
+.viewer-option {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+}
+
+.viewer-option input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 0.9rem;
+  height: 0.9rem;
+  cursor: pointer;
 }
 
 .error {

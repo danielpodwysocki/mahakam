@@ -20,6 +20,7 @@ const mockEnv = {
   namespace: 'env-test-env',
   status: 'pending' as const,
   created_at: '2024-01-01T00:00:00Z',
+  viewers: [],
 }
 
 beforeEach(() => {
@@ -57,7 +58,7 @@ describe('useEnvironments', () => {
     it('appends environment to list immediately', async () => {
       vi.mocked(createEnvironment).mockResolvedValue(mockEnv)
       const { environments, create, stopPolling } = useEnvironments()
-      await create({ name: 'test-env', repos: ['https://github.com/foo/bar'] })
+      await create({ name: 'test-env', repos: ['https://github.com/foo/bar'], viewers: ['terminal'] })
       expect(environments.value).toHaveLength(1)
       expect(environments.value[0].name).toBe('test-env')
       stopPolling()
@@ -67,7 +68,7 @@ describe('useEnvironments', () => {
       vi.mocked(createEnvironment).mockResolvedValue(mockEnv)
       vi.mocked(fetchEnvironments).mockResolvedValue([{ ...mockEnv, status: 'ready' as const }])
       const { environments, create } = useEnvironments()
-      await create({ name: 'test-env', repos: ['https://github.com/foo/bar'] })
+      await create({ name: 'test-env', repos: ['https://github.com/foo/bar'], viewers: ['terminal'] })
 
       await vi.advanceTimersByTimeAsync(3000)
 
@@ -79,7 +80,7 @@ describe('useEnvironments', () => {
       vi.mocked(createEnvironment).mockResolvedValue(mockEnv)
       vi.mocked(fetchEnvironments).mockResolvedValue([{ ...mockEnv, status: 'ready' as const }])
       const { create } = useEnvironments()
-      await create({ name: 'test-env', repos: ['https://github.com/foo/bar'] })
+      await create({ name: 'test-env', repos: ['https://github.com/foo/bar'], viewers: ['terminal'] })
 
       await vi.advanceTimersByTimeAsync(3000)
       const callCount = vi.mocked(fetchEnvironments).mock.calls.length
@@ -92,7 +93,7 @@ describe('useEnvironments', () => {
     it('does not start polling when created env is immediately ready', async () => {
       vi.mocked(createEnvironment).mockResolvedValue({ ...mockEnv, status: 'ready' as const })
       const { create } = useEnvironments()
-      await create({ name: 'test-env', repos: ['https://github.com/foo/bar'] })
+      await create({ name: 'test-env', repos: ['https://github.com/foo/bar'], viewers: ['terminal'] })
 
       await vi.advanceTimersByTimeAsync(3000)
       expect(fetchEnvironments).not.toHaveBeenCalled()

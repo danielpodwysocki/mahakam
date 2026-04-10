@@ -5,4 +5,4 @@
 FROM ghcr.io/tsl0922/ttyd:alpine
 
 # Shell-form CMD: /bin/sh -c expands ${ENV_NAME} before launching ttyd.
-CMD ttyd --base-path "/projects/viewers/${ENV_NAME}" --writable sh
+CMD ttyd --base-path "/projects/viewers/${ENV_NAME}/terminal" --writable sh

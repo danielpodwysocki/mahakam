@@ -105,6 +105,8 @@ tasks:
       - skaffold deploy -a .skaffold-build.json --load-images=true
       - docker build -f images/ttyd.containerfile -t mahakam-ttyd:latest .
       - kind load docker-image mahakam-ttyd:latest --name danielpodwysocki
+      - docker build -f images/browser-viewer.containerfile -t mahakam-browser-viewer:latest .
+      - kind load docker-image mahakam-browser-viewer:latest --name danielpodwysocki
     deps: [cluster, install-argocd]
 
   cluster-down:
@@ -144,10 +146,12 @@ tasks:
       - cargo fmt
 
   load-viewer:
-    desc: Build and load the ttyd viewer image into the Kind cluster (run after cluster is up)
+    desc: Build and load viewer images into the Kind cluster (run after cluster is up)
     cmds:
       - docker build -f images/ttyd.containerfile -t mahakam-ttyd:latest .
       - kind load docker-image mahakam-ttyd:latest --name danielpodwysocki
+      - docker build -f images/browser-viewer.containerfile -t mahakam-browser-viewer:latest .
+      - kind load docker-image mahakam-browser-viewer:latest --name danielpodwysocki
     deps: [cluster]
 
   docker-build:
@@ -156,3 +160,4 @@ tasks:
       - docker build -f images/api.containerfile -t mahakam-api:latest .
       - docker build -f images/web.containerfile -t mahakam-web:latest .
       - docker build -f images/ttyd.containerfile -t mahakam-ttyd:latest .
+      - docker build -f images/browser-viewer.containerfile -t mahakam-browser-viewer:latest .

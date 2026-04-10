@@ -280,10 +280,24 @@ pub async fn list_env_applications(
             .and_then(|s| serde_json::from_str(s).ok())
             .unwrap_or_default();
         let created_at = annotations.get(ANN_CREATED_AT).cloned().unwrap_or_default();
-        let status = annotations
+        let annotation_status = annotations
             .get(ANN_STATUS)
-            .cloned()
-            .unwrap_or_else(|| "pending".to_string());
+            .map(|s| s.as_str())
+            .unwrap_or("pending");
+        let health = app
+            .data
+            .pointer("/status/health/status")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown");
+        let status = if annotation_status == "failed" {
+            "failed".to_string()
+        } else if health == "Healthy" {
+            "ready".to_string()
+        } else if health == "Degraded" {
+            "failed".to_string()
+        } else {
+            "pending".to_string()
+        };
 
         envs.push(Environment {
             id,
@@ -292,6 +306,7 @@ pub async fn list_env_applications(
             repos,
             created_at,
             status,
+            viewers: vec![],
         });
     }
 

@@ -55,7 +55,7 @@ echo ""
 echo "--- POST /api/v1/environments (vcluster install may take several minutes) ---"
 CREATED=$(checked_curl -X POST "$API/api/v1/environments" \
   -H "Content-Type: application/json" \
-  -d "{\"name\":\"$ENV_NAME\",\"repos\":[\"https://github.com/danielpodwysocki/mahakam\"]}") || {
+  -d "{\"name\":\"$ENV_NAME\",\"repos\":[\"https://github.com/danielpodwysocki/mahakam\"],\"viewers\":[\"terminal\",\"browser\"]}") || {
   fail "POST /api/v1/environments failed"
   echo "=== Results: $PASS passed, $FAIL failed ===" && exit 1
 }
@@ -91,19 +91,44 @@ else
   fail "$ENV_NAME did not reach ready status (last status: $STATUS_VAL)"
 fi
 
+# Poll a URL until it returns 200 with body containing EXPECT, or times out.
+# Usage: poll_viewer LABEL URL EXPECT MAX_ATTEMPTS SLEEP_SECS [CURL_EXTRA_FLAGS]
+poll_viewer() {
+  LABEL="$1"; URL="$2"; EXPECT="$3"; MAX="$4"; INTERVAL="$5"; EXTRA="${6:-}"
+  i=0
+  while [ "$i" -lt "$MAX" ]; do
+    BODY=$(curl -s $EXTRA --max-time 10 "$URL")
+    CODE=$?
+    if echo "$BODY" | grep -q "$EXPECT"; then
+      pass "$LABEL endpoint returns expected content"
+      return 0
+    fi
+    i=$((i + 1))
+    echo "  $LABEL: expected '$EXPECT' not found (attempt $i/$MAX, retrying in ${INTERVAL}s…)"
+    sleep "$INTERVAL"
+  done
+  fail "$LABEL endpoint did not return expected content after $MAX attempts"
+}
+
 echo ""
 echo "--- GET viewer terminal endpoint for $ENV_NAME ---"
 if [ "$READY" = "1" ]; then
-  VIEWER_URL="http://viewer-${ENV_NAME}.env-${ENV_NAME}:7681/projects/viewers/${ENV_NAME}/"
-  VIEWER_HTTP=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$VIEWER_URL")
-  echo "HTTP $VIEWER_HTTP ($VIEWER_URL)"
-  if [ "$VIEWER_HTTP" = "200" ]; then
-    pass "viewer endpoint returns 200"
-  else
-    fail "viewer endpoint returned $VIEWER_HTTP (expected 200)"
-  fi
+  # Viewers are spawned after ArgoCD becomes Healthy; poll until the pod is up.
+  TERMINAL_URL="http://viewer-${ENV_NAME}-terminal.env-${ENV_NAME}:80/projects/viewers/${ENV_NAME}/terminal/"
+  poll_viewer "terminal viewer" "$TERMINAL_URL" "ttyd" 30 5
 else
-  fail "skipping viewer test — environment not ready"
+  fail "skipping terminal viewer test — environment not ready"
+fi
+
+echo ""
+echo "--- GET viewer browser endpoint for $ENV_NAME (follows redirect to noVNC) ---"
+if [ "$READY" = "1" ]; then
+  # Check that the browser viewer index.html contains the "Browser Viewer" title,
+  # proving noVNC content is served (not the nginx default welcome page).
+  BROWSER_SVC_URL="http://viewer-${ENV_NAME}-browser.env-${ENV_NAME}:80/projects/viewers/${ENV_NAME}/browser/"
+  poll_viewer "browser viewer" "$BROWSER_SVC_URL" "Browser Viewer" 30 5
+else
+  fail "skipping browser viewer test — environment not ready"
 fi
 
 echo ""
@@ -117,10 +142,21 @@ else
 fi
 
 echo ""
-echo "--- GET /api/v1/environments (after delete) ---"
-LIST=$(checked_curl "$API/api/v1/environments") || { fail "GET after delete failed"; LIST="[]"; }
-echo "$LIST"
-assert_not_contains "$ENV_NAME" "$LIST" "env list does not contain $ENV_NAME after delete"
+echo "--- waiting for $ENV_NAME to disappear from list (ArgoCD cascade is async) ---"
+GONE=0
+for i in $(seq 1 60); do
+  LIST=$(curl -s "$API/api/v1/environments")
+  if ! echo "$LIST" | grep -q "\"name\":\"$ENV_NAME\""; then
+    GONE=1
+    break
+  fi
+  sleep 5
+done
+if [ "$GONE" = "1" ]; then
+  pass "env list does not contain $ENV_NAME after delete"
+else
+  fail "env list still contains $ENV_NAME after delete (ArgoCD cascade may still be running)"
+fi
 
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="

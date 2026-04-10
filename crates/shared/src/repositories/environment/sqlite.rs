@@ -35,6 +35,7 @@ fn row_to_env(row: EnvironmentRow) -> anyhow::Result<Environment> {
         namespace: row.namespace,
         status: row.status,
         created_at: row.created_at,
+        viewers: vec![],
     })
 }
 

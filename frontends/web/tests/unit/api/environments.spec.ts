@@ -8,6 +8,7 @@ const mockEnv = {
   namespace: 'env-test-env',
   status: 'pending' as const,
   created_at: '2024-01-01T00:00:00Z',
+  viewers: [],
 }
 
 beforeEach(() => {
@@ -66,7 +67,7 @@ describe('createEnvironment', () => {
       }),
     )
     await expect(
-      createEnvironment({ name: 'test-env', repos: ['https://github.com/foo/bar'] }),
+      createEnvironment({ name: 'test-env', repos: ['https://github.com/foo/bar'], viewers: ['terminal'] }),
     ).rejects.toThrow('HTTP 422')
   })
 })

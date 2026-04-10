@@ -47,6 +47,7 @@ impl<R: EnvironmentRepository> EnvironmentService<R> {
             namespace,
             status: "pending".to_string(),
             created_at: Utc::now().to_rfc3339(),
+            viewers: vec![],
         };
         self.repo.create(&env).await?;
         Ok(env)

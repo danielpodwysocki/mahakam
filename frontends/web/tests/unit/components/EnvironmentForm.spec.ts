@@ -11,7 +11,7 @@ describe('EnvironmentForm', () => {
     expect(wrapper.find('input[type="url"]').exists()).toBe(true)
   })
 
-  it('calls onSubmit with valid data', async () => {
+  it('calls onSubmit with valid data including selected viewers', async () => {
     const onSubmit = vi.fn()
     const wrapper = mount(EnvironmentForm, {
       props: { onSubmit, submitting: false },
@@ -22,6 +22,7 @@ describe('EnvironmentForm', () => {
     expect(onSubmit).toHaveBeenCalledWith({
       name: 'my-env',
       repos: ['https://github.com/foo/bar'],
+      viewers: ['terminal'],
     })
   })
 
@@ -85,5 +86,42 @@ describe('EnvironmentForm', () => {
       .filter((b) => b.text().includes('Remove'))
     await removeBtns[0].trigger('click')
     expect(wrapper.findAll('input[type="url"]')).toHaveLength(1)
+  })
+
+  it('renders viewer checkboxes for terminal and browser', () => {
+    const wrapper = mount(EnvironmentForm, {
+      props: { onSubmit: vi.fn(), submitting: false },
+    })
+    const checkboxes = wrapper.findAll('input[type="checkbox"]')
+    expect(checkboxes).toHaveLength(2)
+  })
+
+  it('terminal viewer is checked by default', () => {
+    const wrapper = mount(EnvironmentForm, {
+      props: { onSubmit: vi.fn(), submitting: false },
+    })
+    const checkboxes = wrapper.findAll('input[type="checkbox"]')
+    const terminalCheckbox = checkboxes.find((c) => (c.element as HTMLInputElement).value === 'terminal')
+    expect((terminalCheckbox!.element as HTMLInputElement).checked).toBe(true)
+  })
+
+  it('includes browser viewer when its checkbox is checked', async () => {
+    const onSubmit = vi.fn()
+    const wrapper = mount(EnvironmentForm, {
+      props: { onSubmit, submitting: false },
+    })
+    await wrapper.find('#env-name').setValue('my-env')
+    await wrapper.find('input[type="url"]').setValue('https://github.com/foo/bar')
+
+    const browserCheckbox = wrapper
+      .findAll('input[type="checkbox"]')
+      .find((c) => (c.element as HTMLInputElement).value === 'browser')!
+    await browserCheckbox.trigger('change')
+    ;(browserCheckbox.element as HTMLInputElement).checked = true
+    await browserCheckbox.trigger('change')
+
+    await wrapper.find('form').trigger('submit')
+    const call = onSubmit.mock.calls[0][0]
+    expect(call.viewers).toContain('browser')
   })
 })

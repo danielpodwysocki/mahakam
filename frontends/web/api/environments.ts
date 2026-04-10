@@ -1,5 +1,11 @@
 import { z } from 'zod'
 
+export const ViewerSchema = z.object({
+  name: z.string(),
+  display_name: z.string(),
+  path: z.string(),
+})
+
 export const EnvironmentSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -7,6 +13,7 @@ export const EnvironmentSchema = z.object({
   namespace: z.string(),
   status: z.enum(['pending', 'provisioning', 'ready', 'failed']),
   created_at: z.string(),
+  viewers: z.array(ViewerSchema).default([]),
 })
 
 export const CreateEnvironmentSchema = z.object({
@@ -16,8 +23,10 @@ export const CreateEnvironmentSchema = z.object({
     .max(63, 'Name must be at most 63 characters')
     .regex(/^[a-z0-9-]+$/, 'Name must contain only lowercase letters, digits, and hyphens'),
   repos: z.array(z.string().url('Must be a valid URL')).min(1, 'At least one repository is required'),
+  viewers: z.array(z.string()),
 })
 
+export type Viewer = z.infer<typeof ViewerSchema>
 export type Environment = z.infer<typeof EnvironmentSchema>
 export type CreateEnvironment = z.infer<typeof CreateEnvironmentSchema>
 

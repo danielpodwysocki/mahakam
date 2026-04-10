@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import type { Environment } from '../api/environments'
+import type { Environment, Viewer } from '../api/environments'
 import TerminalViewer from './TerminalViewer.vue'
 
 defineProps<{
@@ -16,9 +16,14 @@ function isSettled(status: string): boolean {
   return status === 'ready' || status === 'failed'
 }
 
-const activeConsole = ref<string | null>(null)
-function openConsole(name: string) { activeConsole.value = name }
-function closeConsole() { activeConsole.value = null }
+const activeViewer = ref<{ title: string; src: string } | null>(null)
+
+function openViewer(viewer: Viewer) {
+  activeViewer.value = { title: viewer.display_name, src: `${viewer.path}/` }
+}
+function closeViewer() {
+  activeViewer.value = null
+}
 </script>
 
 <template>
@@ -52,19 +57,22 @@ function closeConsole() { activeConsole.value = null }
               @click="onDelete(env.name)"
             >Delete</button>
             <button
-              class="btn-console"
+              v-for="viewer in env.viewers"
+              :key="viewer.name"
+              class="btn-viewer"
               :disabled="env.status !== 'ready'"
-              @click="openConsole(env.name)"
-            >Open Console</button>
+              @click="openViewer(viewer)"
+            >{{ viewer.display_name }}</button>
           </td>
         </tr>
       </tbody>
     </table>
 
     <TerminalViewer
-      v-if="activeConsole"
-      :env-name="activeConsole"
-      @close="closeConsole"
+      v-if="activeViewer"
+      :title="activeViewer.title"
+      :src="activeViewer.src"
+      @close="closeViewer"
     />
   </div>
 </template>
@@ -205,7 +213,7 @@ function closeConsole() { activeConsole.value = null }
   align-items: center;
 }
 
-.btn-console {
+.btn-viewer {
   font-family: inherit;
   font-size: 0.72rem;
   padding: 0.28rem 0.65rem;
@@ -216,12 +224,12 @@ function closeConsole() { activeConsole.value = null }
   transition: all 0.15s;
 }
 
-.btn-console:hover:not(:disabled) {
+.btn-viewer:hover:not(:disabled) {
   background: rgba(139, 96, 60, 0.15);
   border-color: var(--accent);
 }
 
-.btn-console:disabled {
+.btn-viewer:disabled {
   opacity: 0.35;
   cursor: not-allowed;
 }

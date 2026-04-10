@@ -10,6 +10,16 @@ const mockEnv: Environment = {
   namespace: 'env-test-env',
   status: 'pending',
   created_at: '2024-01-01T00:00:00Z',
+  viewers: [],
+}
+
+const readyEnvWithViewers: Environment = {
+  ...mockEnv,
+  status: 'ready',
+  viewers: [
+    { name: 'terminal', display_name: 'Terminal', path: '/projects/viewers/test-env/terminal' },
+    { name: 'browser', display_name: 'Browser', path: '/projects/viewers/test-env/browser' },
+  ],
 }
 
 describe('EnvironmentList', () => {
@@ -39,9 +49,8 @@ describe('EnvironmentList', () => {
   })
 
   it('shows "ready" label for ready status', () => {
-    const env: Environment = { ...mockEnv, status: 'ready' }
     const wrapper = mount(EnvironmentList, {
-      props: { environments: [env], onDelete: vi.fn() },
+      props: { environments: [readyEnvWithViewers], onDelete: vi.fn() },
     })
     expect(wrapper.text()).toContain('ready')
   })
@@ -54,18 +63,16 @@ describe('EnvironmentList', () => {
   })
 
   it('enables delete button when env is ready', () => {
-    const env: Environment = { ...mockEnv, status: 'ready' }
     const wrapper = mount(EnvironmentList, {
-      props: { environments: [env], onDelete: vi.fn() },
+      props: { environments: [readyEnvWithViewers], onDelete: vi.fn() },
     })
     expect(wrapper.find('button').attributes('disabled')).toBeUndefined()
   })
 
   it('calls onDelete with the environment name when Delete clicked on settled env', async () => {
     const onDelete = vi.fn()
-    const env: Environment = { ...mockEnv, status: 'ready' }
     const wrapper = mount(EnvironmentList, {
-      props: { environments: [env], onDelete },
+      props: { environments: [readyEnvWithViewers], onDelete },
     })
     await wrapper.find('button').trigger('click')
     expect(onDelete).toHaveBeenCalledWith('test-env')
@@ -86,61 +93,56 @@ describe('EnvironmentList', () => {
     expect(wrapper.text()).toContain('https://a.com, https://b.com')
   })
 
-  it('disables console button when env is not settled', () => {
+  it('shows no viewer buttons when env has no viewers', () => {
     const wrapper = mount(EnvironmentList, {
       props: { environments: [mockEnv], onDelete: vi.fn() },
     })
-    const buttons = wrapper.findAll('button')
-    const consoleBtn = buttons.find(b => b.text().includes('Open Console'))
-    expect(consoleBtn).toBeDefined()
-    expect(consoleBtn!.attributes('disabled')).toBeDefined()
+    const viewerBtns = wrapper.findAll('button').filter((b) => b.classes('btn-viewer'))
+    expect(viewerBtns).toHaveLength(0)
   })
 
-  it('enables console button only when env is ready', () => {
-    const env: Environment = { ...mockEnv, status: 'ready' }
+  it('renders a button for each viewer', () => {
+    const wrapper = mount(EnvironmentList, {
+      props: { environments: [readyEnvWithViewers], onDelete: vi.fn() },
+    })
+    const viewerBtns = wrapper.findAll('button').filter((b) => b.classes('btn-viewer'))
+    expect(viewerBtns).toHaveLength(2)
+    expect(viewerBtns[0].text()).toBe('Terminal')
+    expect(viewerBtns[1].text()).toBe('Browser')
+  })
+
+  it('disables viewer buttons when env is not ready', () => {
+    const env: Environment = {
+      ...mockEnv,
+      status: 'failed',
+      viewers: [{ name: 'terminal', display_name: 'Terminal', path: '/projects/viewers/test-env/terminal' }],
+    }
     const wrapper = mount(EnvironmentList, {
       props: { environments: [env], onDelete: vi.fn() },
     })
-    const buttons = wrapper.findAll('button')
-    const consoleBtn = buttons.find(b => b.text().includes('Open Console'))
-    expect(consoleBtn).toBeDefined()
-    expect(consoleBtn!.attributes('disabled')).toBeUndefined()
+    const viewerBtn = wrapper.findAll('button').find((b) => b.classes('btn-viewer'))
+    expect(viewerBtn!.attributes('disabled')).toBeDefined()
   })
 
-  it('keeps console button disabled for failed status', () => {
-    const env: Environment = { ...mockEnv, status: 'failed' }
+  it('opens viewer modal with correct src when viewer button clicked', async () => {
     const wrapper = mount(EnvironmentList, {
-      props: { environments: [env], onDelete: vi.fn() },
+      props: { environments: [readyEnvWithViewers], onDelete: vi.fn() },
     })
-    const buttons = wrapper.findAll('button')
-    const consoleBtn = buttons.find(b => b.text().includes('Open Console'))
-    expect(consoleBtn!.attributes('disabled')).toBeDefined()
-  })
-
-  it('shows TerminalViewer after console button is clicked', async () => {
-    const env: Environment = { ...mockEnv, status: 'ready' }
-    const wrapper = mount(EnvironmentList, {
-      props: { environments: [env], onDelete: vi.fn() },
-    })
-    const buttons = wrapper.findAll('button')
-    const consoleBtn = buttons.find(b => b.text().includes('Open Console'))
-    await consoleBtn!.trigger('click')
+    const terminalBtn = wrapper.findAll('button').find((b) => b.text() === 'Terminal')!
+    await terminalBtn.trigger('click')
     expect(wrapper.find('iframe').exists()).toBe(true)
-    expect(wrapper.find('iframe').attributes('src')).toBe('/projects/viewers/test-env/')
+    expect(wrapper.find('iframe').attributes('src')).toBe('/projects/viewers/test-env/terminal/')
   })
 
-  it('hides TerminalViewer after dismiss', async () => {
-    const env: Environment = { ...mockEnv, status: 'ready' }
+  it('hides viewer modal after dismiss', async () => {
     const wrapper = mount(EnvironmentList, {
-      props: { environments: [env], onDelete: vi.fn() },
+      props: { environments: [readyEnvWithViewers], onDelete: vi.fn() },
       attachTo: document.body,
     })
-    const buttons = wrapper.findAll('button')
-    const consoleBtn = buttons.find(b => b.text().includes('Open Console'))
-    await consoleBtn!.trigger('click')
+    const terminalBtn = wrapper.findAll('button').find((b) => b.text() === 'Terminal')!
+    await terminalBtn.trigger('click')
     expect(wrapper.find('iframe').exists()).toBe(true)
-    // click the dismiss button inside TerminalViewer
-    const dismissBtn = wrapper.findAll('button').find(b => b.text().includes('Dismiss'))
+    const dismissBtn = wrapper.findAll('button').find((b) => b.text().includes('Dismiss'))
     await dismissBtn!.trigger('click')
     expect(wrapper.find('iframe').exists()).toBe(false)
     wrapper.unmount()

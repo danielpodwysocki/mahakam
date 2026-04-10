@@ -26,6 +26,13 @@ struct Config {
 
     #[arg(
         long,
+        env = "BROWSER_VIEWER_IMAGE",
+        default_value = "mahakam-browser-viewer:latest"
+    )]
+    browser_viewer_image: String,
+
+    #[arg(
+        long,
         env = "REPO_URL",
         default_value = "https://github.com/danielpodwysocki/mahakam.git"
     )]
@@ -54,6 +61,7 @@ async fn main() -> Result<()> {
         kube_client: Arc::new(kube_client),
         base_path: Arc::new(config.environments_base_path),
         viewer_image: Arc::new(config.viewer_image),
+        browser_viewer_image: Arc::new(config.browser_viewer_image),
         repo_url: Arc::new(config.repo_url),
         repo_revision: Arc::new(config.repo_revision),
         argocd_namespace: Arc::new(config.argocd_namespace),

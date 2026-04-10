@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::process::Stdio;
 
 use k8s_openapi::api::apps::v1::{Deployment, DeploymentSpec};
@@ -8,45 +8,75 @@ use k8s_openapi::api::core::v1::{
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::LabelSelector;
 use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
 use kube::{
-    api::{Api, ObjectMeta, PostParams},
+    api::{Api, DeleteParams, DynamicObject, ListParams, ObjectMeta, PostParams},
+    discovery::ApiResource,
     Client,
 };
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tracing::{info, warn};
 
-const SELECTOR_LABEL: &str = "mahakam.io/viewer";
+use shared::repositories::environment::Viewer;
+
+const SELECTOR_LABEL: &str = "mahakam.io/viewer-instance";
+const LABEL_VIEWER: &str = "mahakam.io/viewer";
+const LABEL_ENV_NAME: &str = "mahakam.io/env-name";
+const ANN_VIEWER_DISPLAY_NAME: &str = "mahakam.io/viewer-display-name";
+const ANN_VIEWER_PATH: &str = "mahakam.io/viewer-path";
 const ROUTE_NAMESPACE: &str = "mahakam-system";
 const GATEWAY_NAME: &str = "mahakam";
 
-/// All the information needed to spawn a viewer alongside an environment.
-///
-/// Callers construct this for a specific viewer type (e.g. ttyd) and pass it
-/// to [`spawn_viewer`]. Adding a new viewer type means constructing a different
-/// `ViewerSpec` — no changes needed in the spawn/teardown machinery.
+const HTTPROUTE_GROUP: &str = "gateway.networking.k8s.io";
+const HTTPROUTE_VERSION: &str = "v1";
+const HTTPROUTE_KIND: &str = "HTTPRoute";
+const HTTPROUTE_PLURAL: &str = "httproutes";
+
+/// All the information needed to spawn one viewer alongside an environment.
 pub struct ViewerSpec {
+    /// Short machine name (e.g. `"terminal"`, `"browser"`). Used in resource names.
+    pub name: String,
+    /// Human-readable label shown in the UI (e.g. `"Terminal"`, `"Browser"`).
+    pub display_name: String,
     /// OCI image reference for the viewer container.
     pub image: String,
-    /// HTTP path prefix the viewer is reachable at (e.g. `"/projects/viewers/my-env"`).
+    /// HTTP path prefix the viewer is reachable at (e.g. `"/projects/viewers/my-env/terminal"`).
     pub path_prefix: String,
     /// Port the viewer container listens on.
     pub port: u16,
     /// Environment variables injected into the container verbatim.
     pub env_vars: Vec<(String, String)>,
+    /// When true, adds a URLRewrite filter to the HTTPRoute that strips `path_prefix`
+    /// before forwarding to the backend. Use for viewers that serve at `/` (e.g. noVNC).
+    /// When false, the full path is forwarded and the viewer must handle its own prefix.
+    pub strip_path_prefix: bool,
 }
 
-/// Spawns a viewer Deployment, Service, ReferenceGrant, and HTTPRoute for `env_name`.
+fn httproute_api(client: &Client) -> Api<DynamicObject> {
+    let ar = ApiResource {
+        group: HTTPROUTE_GROUP.into(),
+        version: HTTPROUTE_VERSION.into(),
+        api_version: format!("{HTTPROUTE_GROUP}/{HTTPROUTE_VERSION}"),
+        kind: HTTPROUTE_KIND.into(),
+        plural: HTTPROUTE_PLURAL.into(),
+    };
+    Api::namespaced_with(client.clone(), ROUTE_NAMESPACE, &ar)
+}
+
+/// Spawns a Deployment, Service, ReferenceGrant, and HTTPRoute for one viewer.
 ///
-/// Resources are split across two namespaces:
+/// Resources are named `viewer-{env_name}-{spec.name}` and split across two namespaces:
 /// - `env-{env_name}`: Deployment, Service, ReferenceGrant
 /// - `mahakam-system`: HTTPRoute (cross-namespace backendRef via the ReferenceGrant)
+///
+/// The Service always exposes port 80, regardless of the container port, so the
+/// gateway proxy does not need to know the internal port.
 pub async fn spawn_viewer(client: &Client, env_name: &str, spec: ViewerSpec) -> anyhow::Result<()> {
     let ns = format!("env-{env_name}");
-    let name = format!("viewer-{env_name}");
+    let name = format!("viewer-{env_name}-{}", spec.name);
     let port_i32 = spec.port as i32;
 
     let mut pod_labels = BTreeMap::new();
-    pod_labels.insert(SELECTOR_LABEL.to_string(), env_name.to_string());
+    pod_labels.insert(SELECTOR_LABEL.to_string(), name.clone());
 
     let container_env: Vec<EnvVar> = spec
         .env_vars
@@ -104,9 +134,10 @@ pub async fn spawn_viewer(client: &Client, env_name: &str, spec: ViewerSpec) -> 
         .create(&PostParams::default(), &deployment)
         .await
         .map_err(|e| anyhow::anyhow!("failed to create viewer Deployment {name}: {e}"))?;
-    info!(env = %env_name, resource = %name, "viewer deployment created");
+    info!(env = %env_name, viewer = %spec.name, resource = %name, "viewer Deployment created");
 
     // ── Service ───────────────────────────────────────────────────────────────
+    // Always exposes port 80 externally; maps to the container's actual port.
     let service = Service {
         metadata: ObjectMeta {
             name: Some(name.clone()),
@@ -116,7 +147,7 @@ pub async fn spawn_viewer(client: &Client, env_name: &str, spec: ViewerSpec) -> 
         spec: Some(ServiceSpec {
             selector: Some(pod_labels),
             ports: Some(vec![ServicePort {
-                port: port_i32,
+                port: 80,
                 target_port: Some(IntOrString::Int(port_i32)),
                 ..Default::default()
             }]),
@@ -129,66 +160,143 @@ pub async fn spawn_viewer(client: &Client, env_name: &str, spec: ViewerSpec) -> 
         .create(&PostParams::default(), &service)
         .await
         .map_err(|e| anyhow::anyhow!("failed to create viewer Service {name}: {e}"))?;
-    info!(env = %env_name, resource = %name, "viewer service created");
+    info!(env = %env_name, viewer = %spec.name, resource = %name, "viewer Service created");
 
     // ── ReferenceGrant ────────────────────────────────────────────────────────
-    // Allows the HTTPRoute in mahakam-system to reference the Service in env-{name}.
     kubectl_apply(&serde_json::json!({
         "apiVersion": "gateway.networking.k8s.io/v1beta1",
         "kind": "ReferenceGrant",
-        "metadata": { "name": "allow-mahakam-gateway", "namespace": ns },
+        "metadata": { "name": format!("allow-mahakam-{}", spec.name), "namespace": ns },
         "spec": {
             "from": [{ "group": "gateway.networking.k8s.io", "kind": "HTTPRoute", "namespace": ROUTE_NAMESPACE }],
             "to":   [{ "group": "", "kind": "Service" }],
         },
     }))
     .await?;
-    info!(env = %env_name, "viewer ReferenceGrant applied");
+    info!(env = %env_name, viewer = %spec.name, "viewer ReferenceGrant applied");
 
     // ── HTTPRoute ─────────────────────────────────────────────────────────────
-    // Lives in mahakam-system, routes /projects/viewers/{name}/* to the viewer Service.
+    // Labels allow discovery via list_all_env_viewers.
+    // Annotations carry display name and path for the frontend.
+    let mut rules_entry = serde_json::json!({
+        "matches": [{ "path": { "type": "PathPrefix", "value": spec.path_prefix } }],
+        "backendRefs": [{ "name": name, "namespace": ns, "port": 80 }],
+    });
+    if spec.strip_path_prefix {
+        rules_entry["filters"] = serde_json::json!([{
+            "type": "URLRewrite",
+            "urlRewrite": {
+                "path": {
+                    "type": "ReplacePrefixMatch",
+                    "replacePrefixMatch": "/",
+                },
+            },
+        }]);
+    }
+
     kubectl_apply(&serde_json::json!({
         "apiVersion": "gateway.networking.k8s.io/v1",
         "kind": "HTTPRoute",
-        "metadata": { "name": name, "namespace": ROUTE_NAMESPACE },
+        "metadata": {
+            "name": name,
+            "namespace": ROUTE_NAMESPACE,
+            "labels": {
+                LABEL_VIEWER: "true",
+                LABEL_ENV_NAME: env_name,
+            },
+            "annotations": {
+                ANN_VIEWER_DISPLAY_NAME: spec.display_name,
+                ANN_VIEWER_PATH: spec.path_prefix,
+            },
+        },
         "spec": {
             "parentRefs": [{ "name": GATEWAY_NAME, "namespace": ROUTE_NAMESPACE }],
-            "rules": [{
-                "matches": [{ "path": { "type": "PathPrefix", "value": spec.path_prefix } }],
-                "backendRefs": [{ "name": name, "namespace": ns, "port": port_i32 }],
-            }],
+            "rules": [rules_entry],
         },
     }))
     .await?;
-    info!(env = %env_name, route = %name, "viewer HTTPRoute applied");
+    info!(env = %env_name, viewer = %spec.name, route = %name, "viewer HTTPRoute applied");
 
     Ok(())
 }
 
-/// Removes the viewer HTTPRoute for `env_name`.
+/// Lists all viewer HTTPRoutes across all environments, grouped by env name.
 ///
-/// The Deployment, Service, and ReferenceGrant live in `env-{env_name}` and are cleaned
-/// up automatically when that namespace is deleted during environment teardown. Only the
-/// HTTPRoute in `mahakam-system` needs explicit removal.
-pub async fn teardown_viewer(env_name: &str) -> anyhow::Result<()> {
-    let route_name = format!("viewer-{env_name}");
+/// A single list call covers all environments; callers merge the result into
+/// each `Environment` returned by `list_env_applications`.
+pub async fn list_all_env_viewers(client: &Client) -> anyhow::Result<HashMap<String, Vec<Viewer>>> {
+    let api = httproute_api(client);
+    let lp = ListParams::default().labels(&format!("{LABEL_VIEWER}=true"));
+    let routes = api
+        .list(&lp)
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to list viewer HTTPRoutes: {e}"))?;
 
-    let status = Command::new("kubectl")
-        .args([
-            "delete",
-            "httproute",
-            &route_name,
-            "-n",
-            ROUTE_NAMESPACE,
-            "--ignore-not-found",
-        ])
-        .status()
-        .await?;
+    let mut map: HashMap<String, Vec<Viewer>> = HashMap::new();
 
-    if status.success() {
-        info!(env = %env_name, route = %route_name, "viewer HTTPRoute removed");
-    } else {
-        warn!(env = %env_name, "kubectl delete httproute returned non-zero (may not exist)");
+    for route in routes {
+        let labels = route.metadata.labels.as_ref().cloned().unwrap_or_default();
+        let annotations = route
+            .metadata
+            .annotations
+            .as_ref()
+            .cloned()
+            .unwrap_or_default();
+
+        let Some(env_name) = labels.get(LABEL_ENV_NAME).cloned() else {
+            continue;
+        };
+        let Some(name) = route.metadata.name.as_deref() else {
+            continue;
+        };
+        let display_name = annotations
+            .get(ANN_VIEWER_DISPLAY_NAME)
+            .cloned()
+            .unwrap_or_else(|| name.to_string());
+        let path = annotations
+            .get(ANN_VIEWER_PATH)
+            .cloned()
+            .unwrap_or_default();
+
+        // Derive the short viewer name: strip "viewer-{env_name}-" prefix from route name.
+        let viewer_name = name
+            .strip_prefix(&format!("viewer-{env_name}-"))
+            .unwrap_or(name)
+            .to_string();
+
+        map.entry(env_name).or_default().push(Viewer {
+            name: viewer_name,
+            display_name,
+            path,
+        });
+    }
+
+    Ok(map)
+}
+
+/// Removes all viewer HTTPRoutes for `env_name` from `mahakam-system`.
+///
+/// The Deployment, Service, and ReferenceGrant live in `env-{env_name}` and are
+/// cleaned up automatically when that namespace is deleted during ArgoCD cascade.
+pub async fn teardown_viewer(client: &Client, env_name: &str) -> anyhow::Result<()> {
+    let api = httproute_api(client);
+    let lp =
+        ListParams::default().labels(&format!("{LABEL_VIEWER}=true,{LABEL_ENV_NAME}={env_name}"));
+
+    let routes = api
+        .list(&lp)
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to list viewer HTTPRoutes for {env_name}: {e}"))?;
+
+    for route in routes {
+        let route_name = route.metadata.name.as_deref().unwrap_or_default();
+        match api.delete(route_name, &DeleteParams::default()).await {
+            Ok(_) => info!(env = %env_name, route = %route_name, "viewer HTTPRoute deleted"),
+            Err(kube::Error::Api(ref e)) if e.code == 404 => {}
+            Err(e) => {
+                warn!(env = %env_name, route = %route_name, error = %e, "failed to delete viewer HTTPRoute")
+            }
+        }
     }
 
     Ok(())
