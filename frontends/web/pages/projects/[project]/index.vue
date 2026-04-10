@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
-import WorkspaceForm from '../../components/WorkspaceForm.vue'
-import WorkspaceList from '../../components/WorkspaceList.vue'
-import type { CreateWorkspace } from '../../api/workspaces'
+import WorkspaceForm from '../../../components/WorkspaceForm.vue'
+import WorkspaceList from '../../../components/WorkspaceList.vue'
+import type { CreateWorkspace } from '../../../api/workspaces'
 
 const route = useRoute()
 const project = route.params.project as string
